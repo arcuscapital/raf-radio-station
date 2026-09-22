@@ -153,6 +153,127 @@ const MODE_LABELS = { quiet: "🤫 Quiet", record: "🎙️ Recorded", backgroun
 const TYPE_LABELS = { jingle: "Jingle", talk: "Weather, Traffic, News", bed: "DJ Talk", commercial: "Commercial Break" };
 const TYPE_ICONS = { jingle: "🎤", talk: "🗣️", bed: "🎶", commercial: "📢" };
 
+// ====================== PRESS-AND-HOLD DRAG TO REORDER (works with touch + mouse) ======================
+// The old implementation used the HTML5 drag-and-drop API, which only fires from
+// a mouse — it silently does nothing on a phone. This uses Pointer Events (which
+// fire for touch, mouse and pen alike) with a long-press to start the drag, so it
+// works consistently on the phone this app is actually used on.
+const LONG_PRESS_MS = 320;
+const DRAG_CANCEL_PX = 10;
+let dragCtx = null;
+
+function attachCardDrag(card) {
+  let longPressTimer = null;
+  let startX = 0, startY = 0, pointerId = null;
+
+  function cancelPreDrag() {
+    clearTimeout(longPressTimer);
+    card.removeEventListener("pointermove", onPreMove);
+    card.removeEventListener("pointerup", onPreUp);
+    card.removeEventListener("pointercancel", onPreUp);
+  }
+  function onPreMove(e) {
+    if (Math.abs(e.clientY - startY) > DRAG_CANCEL_PX || Math.abs(e.clientX - startX) > DRAG_CANCEL_PX) {
+      cancelPreDrag();
+    }
+  }
+  function onPreUp() { cancelPreDrag(); }
+
+  card.addEventListener("pointerdown", (e) => {
+    if (e.target.closest("button")) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    startX = e.clientX; startY = e.clientY; pointerId = e.pointerId;
+    card.addEventListener("pointermove", onPreMove);
+    card.addEventListener("pointerup", onPreUp);
+    card.addEventListener("pointercancel", onPreUp);
+    longPressTimer = setTimeout(() => {
+      cancelPreDrag();
+      beginDrag(card, pointerId, e.clientY);
+    }, LONG_PRESS_MS);
+  });
+}
+
+function beginDrag(card, pointerId, clientY) {
+  const siblings = Array.from(blocksList.children);
+  const index = siblings.indexOf(card);
+  const listRect = blocksList.getBoundingClientRect();
+  const cardRect = card.getBoundingClientRect();
+
+  dragCtx = {
+    card,
+    pointerId,
+    startClientY: clientY,
+    index,
+    targetIndex: index,
+    cardHeight: cardRect.height,
+    tops: siblings.map(el => el.getBoundingClientRect().top - listRect.top)
+  };
+
+  try { card.setPointerCapture(pointerId); } catch (e) {}
+  card.classList.add("dragging");
+  card.style.touchAction = "none";
+  document.addEventListener("pointermove", onDragMove);
+  document.addEventListener("pointerup", onDragEnd);
+  document.addEventListener("pointercancel", onDragEnd);
+  if (navigator.vibrate) navigator.vibrate(15);
+}
+
+function onDragMove(e) {
+  if (!dragCtx || e.pointerId !== dragCtx.pointerId) return;
+  e.preventDefault();
+  const deltaY = e.clientY - dragCtx.startClientY;
+  dragCtx.card.style.transform = `translateY(${deltaY}px)`;
+
+  const siblings = Array.from(blocksList.children);
+  const draggedCenter = dragCtx.tops[dragCtx.index] + dragCtx.cardHeight / 2 + deltaY;
+
+  let insertPos = 0;
+  siblings.forEach((el, i) => {
+    if (i === dragCtx.index) return;
+    const height = el.getBoundingClientRect().height;
+    const mid = dragCtx.tops[i] + height / 2;
+    if (draggedCenter > mid) insertPos++;
+  });
+
+  const newTarget = Math.min(Math.max(insertPos, 0), siblings.length - 1);
+  if (newTarget !== dragCtx.targetIndex) {
+    dragCtx.targetIndex = newTarget;
+    applyDragShift();
+  }
+}
+
+function applyDragShift() {
+  const siblings = Array.from(blocksList.children);
+  const gap = 12; // matches .blocks-list { gap: 12px; } in style.css
+  siblings.forEach((el, i) => {
+    if (i === dragCtx.index) return;
+    let shift = 0;
+    if (dragCtx.targetIndex > dragCtx.index && i > dragCtx.index && i <= dragCtx.targetIndex) {
+      shift = -(dragCtx.cardHeight + gap);
+    } else if (dragCtx.targetIndex < dragCtx.index && i < dragCtx.index && i >= dragCtx.targetIndex) {
+      shift = dragCtx.cardHeight + gap;
+    }
+    el.style.transform = shift ? `translateY(${shift}px)` : "";
+  });
+}
+
+function onDragEnd(e) {
+  if (!dragCtx || e.pointerId !== dragCtx.pointerId) return;
+  const { index, targetIndex } = dragCtx;
+  document.removeEventListener("pointermove", onDragMove);
+  document.removeEventListener("pointerup", onDragEnd);
+  document.removeEventListener("pointercancel", onDragEnd);
+
+  dragCtx = null;
+
+  if (targetIndex !== index) {
+    const [moved] = blocks.splice(index, 1);
+    blocks.splice(targetIndex, 0, moved);
+    saveShow();
+  }
+  renderBlocks(); // fresh render clears every inline transform left over from dragging
+}
+
 // ====================== RENDER BLOCKS ======================
 function renderBlocks() {
   blocksList.innerHTML = "";
@@ -160,7 +281,6 @@ function renderBlocks() {
     const card = document.createElement("div");
     card.className = `block-card ${block.type}`;
     card.dataset.index = index;
-    card.draggable = true;
 
     let leftContent = "";
     let rightContent = "";
@@ -202,24 +322,7 @@ function renderBlocks() {
       });
     });
 
-    card.addEventListener("dragstart", (e) => {
-      e.dataTransfer.setData("text/plain", index);
-      card.style.opacity = "0.5";
-    });
-    card.addEventListener("dragend", () => {
-      card.style.opacity = "1";
-    });
-    card.addEventListener("dragover", (e) => e.preventDefault());
-    card.addEventListener("drop", (e) => {
-      e.preventDefault();
-      const from = parseInt(e.dataTransfer.getData("text/plain"));
-      const to = index;
-      if (from !== to) {
-        const [moved] = blocks.splice(from, 1);
-        blocks.splice(to, 0, moved);
-        renderBlocks(); saveShow();
-      }
-    });
+    attachCardDrag(card);
 
     blocksList.appendChild(card);
   });
@@ -851,6 +954,27 @@ function setLiveButtonsForBlock(block) {
   finishedTalkingBtn.classList.toggle("hidden", isSongs);
 }
 
+// ====================== LIVE-SCREEN TIMETABLE ======================
+const TIMETABLE_SHORT_LABELS = { jingle: "Jingle", talk: "News", bed: "DJ Talk", commercial: "Ad Break" };
+const timetableEl = document.getElementById("timetable");
+
+function renderTimetable() {
+  if (!timetableEl) return;
+  timetableEl.innerHTML = "";
+  blocks.forEach((block, i) => {
+    const chip = document.createElement("div");
+    chip.className = `timetable-chip ${block.type}`;
+    if (i < currentBlockIndex) chip.classList.add("played");
+    if (i === currentBlockIndex) chip.classList.add("current");
+    const icon = block.type === "songs" ? "🎵" : TYPE_ICONS[block.type];
+    const label = block.type === "songs" ? `${block.count} Songs` : TIMETABLE_SHORT_LABELS[block.type];
+    chip.innerHTML = `<span class="tt-icon">${icon}</span><span class="tt-label">${label}</span>`;
+    timetableEl.appendChild(chip);
+  });
+  const currentChip = timetableEl.children[currentBlockIndex];
+  if (currentChip) currentChip.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+}
+
 async function runCurrentBlock() {
   clearActivePlayback();
 
@@ -871,6 +995,7 @@ async function runCurrentBlock() {
 
   const block = blocks[currentBlockIndex];
   nextUp.textContent = "Next up: " + getNextBlockPreview();
+  renderTimetable();
   setLiveButtonsForBlock(block);
 
   if (block.type === "songs") {

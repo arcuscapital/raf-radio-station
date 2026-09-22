@@ -141,6 +141,14 @@ header h1 {
   transform: scale(0.98);
 }
 
+.block-card.dragging {
+  position: relative;
+  z-index: 50;
+  transition: none;
+  box-shadow: 0 14px 28px rgba(0,0,0,0.3);
+  cursor: grabbing;
+}
+
 .block-card.songs { background: linear-gradient(135deg, #4A90E2, #357ABD); }
 .block-card.jingle { background: linear-gradient(135deg, #F5A623, #E09400); }
 .block-card.talk { background: linear-gradient(135deg, #7ED321, #5BA517); }
@@ -407,6 +415,85 @@ header h1 {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* Live-screen timetable */
+.timetable-wrap {
+  margin-top: 24px;
+}
+
+.timetable-label {
+  font-weight: 700;
+  color: #1e3a5f;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.timetable {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 6px 4px 14px;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+
+.timetable-chip {
+  flex: 0 0 auto;
+  min-width: 74px;
+  padding: 10px 8px;
+  border-radius: 14px;
+  color: white;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+  box-shadow: 0 3px 8px rgba(0,0,0,0.12);
+  transition: opacity 0.3s, transform 0.3s, filter 0.3s;
+}
+
+.timetable-chip .tt-icon {
+  font-size: 1.2rem;
+}
+
+.timetable-chip.songs { background: linear-gradient(135deg, #4A90E2, #357ABD); }
+.timetable-chip.jingle { background: linear-gradient(135deg, #F5A623, #E09400); }
+.timetable-chip.talk { background: linear-gradient(135deg, #7ED321, #5BA517); }
+.timetable-chip.bed { background: linear-gradient(135deg, #F5A623, #D68910); }
+.timetable-chip.commercial { background: linear-gradient(135deg, #9B59B6, #8E44AD); }
+
+.timetable-chip.played {
+  opacity: 0.4;
+  filter: grayscale(0.85);
+  box-shadow: none;
+}
+
+.timetable-chip.current {
+  transform: scale(1.1);
+  box-shadow: 0 0 0 3px #fff, 0 0 0 6px #1e3a5f, 0 6px 14px rgba(0,0,0,0.25);
+}
+
+.timetable-chip.current::before {
+  content: "▼";
+  position: absolute;
+  top: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.95rem;
+  color: #1e3a5f;
+  animation: timetableArrowBounce 1s ease-in-out infinite;
+}
+
+@keyframes timetableArrowBounce {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(-4px); }
 }
 
 /* Modal */
