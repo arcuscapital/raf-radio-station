@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#4A90E2" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>My Radio Station</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icon.png" />
+  <!-- Spotify Web Playback SDK -->
+  <script src="https://sdk.scdn.co/spotify-player.js"></script>
+</head>
+<body>
+  <!-- ===== BUILDER SCREEN ===== -->
+  <div id="builder-screen" class="screen">
+    <header>
+      <div class="logo">
+        <span class="radio-icon">📻</span>
+        <h1>My Radio Station</h1>
+      </div>
+      <span class="mode-badge">DJ Mode</span>
+    </header>
+
+    <h2 class="screen-title">Build Your Show</h2>
+
+    <div class="playlist-box">
+      <label for="playlist-input">Spotify Playlist Link</label>
+      <input type="text" id="playlist-input" placeholder="Paste playlist link here..." value="https://open.spotify.com/playlist/37i9dQZF1E4CPcTtDJiVpn" />
+      <small>Paste any Spotify playlist link. The app will play songs from it.</small>
+    </div>
+
+    <div class="playlist-box">
+      <label for="bg-music-input">Background Music (for talk-over)</label>
+      <input type="text" id="bg-music-input" placeholder="Paste a Spotify song/playlist link..." />
+      <small>This one song/playlist is used whenever a block is set to "Background Music".</small>
+    </div>
+
+    <div id="blocks-list" class="blocks-list">
+      <!-- Blocks will be rendered here by JS -->
+    </div>
+
+    <div class="add-block-area">
+      <button id="add-block-btn" class="btn btn-add">+ Add Block</button>
+    </div>
+
+    <div class="loop-toggle-area">
+      <label class="loop-label">
+        <input type="checkbox" id="loop-toggle" />
+        <span class="toggle-slider"></span>
+        <span class="loop-text">🔁 Loop the show</span>
+      </label>
+    </div>
+
+    <button id="start-show-btn" class="btn btn-start">▶ Start Show</button>
+
+    <p class="helper-text">Drag the blocks to change the order!<br>Tap + to add more</p>
+
+    <div class="spotify-status" id="spotify-status">
+      <button id="login-btn" class="btn btn-spotify">Connect Spotify</button>
+      <span id="spotify-connected" class="hidden">✅ Spotify connected</span>
+    </div>
+  </div>
+
+  <!-- ===== LIVE SHOW SCREEN ===== -->
+  <div id="live-screen" class="screen hidden">
+    <header>
+      <div class="logo">
+        <span class="radio-icon">📻</span>
+        <h1>My Radio Station</h1>
+      </div>
+      <span class="live-badge">LIVE</span>
+    </header>
+
+    <div class="status-card" id="status-card">
+      <div class="status-label" id="status-label">Now Playing</div>
+      <div class="status-main" id="status-main">Song 1 of 4</div>
+      <div class="status-sub" id="status-sub">Getting ready...</div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+    </div>
+
+    <div class="next-up" id="next-up">
+      Next up: —
+    </div>
+
+    <div class="live-buttons">
+      <button id="finished-talking-btn" class="btn btn-finished">I'm finished talking → Next</button>
+      <button id="skip-song-btn" class="btn btn-skip">Skip this song</button>
+      <button id="pause-btn" class="btn btn-pause">Pause everything</button>
+      <button id="stop-show-btn" class="btn btn-stop">Stop Show</button>
+    </div>
+  </div>
+
+  <!-- ===== ADD BLOCK MODAL ===== -->
+  <div id="add-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3>Add a Block</h3>
+      <button class="block-type-btn" data-type="songs">🎵 Play Songs</button>
+      <button class="block-type-btn" data-type="jingle">🎤 Jingle</button>
+      <button class="block-type-btn" data-type="talk">🗣️ Talk Time (News)</button>
+      <button class="block-type-btn" data-type="bed">🎶 Talk-over Music</button>
+      <button class="block-type-btn" data-type="commercial">📢 Commercial Break</button>
+      <button id="close-modal" class="btn btn-cancel">Cancel</button>
+    </div>
+  </div>
+
+  <!-- ===== BLOCK MODE MODAL (quiet / record / background) ===== -->
+  <div id="mode-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3 id="mode-modal-title">How should this work?</h3>
+      <button class="mode-btn" data-mode="quiet">🤫 Quiet</button>
+      <button class="mode-btn" data-mode="record">🎙️ Record my own voice</button>
+      <button class="mode-btn" data-mode="background">🎶 Background Music</button>
+      <button id="close-mode-modal" class="btn btn-cancel">Cancel</button>
+    </div>
+  </div>
+
+  <!-- ===== RECORD MODAL ===== -->
+  <div id="recorder-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3>Record your voice</h3>
+      <p class="recorder-hint" id="recorder-hint">Tap the button, say your bit, then tap stop.</p>
+      <button id="recorder-main-btn" class="btn btn-record">⏺ Start Recording</button>
+      <div id="recorder-timer" class="record-timer hidden">00:00</div>
+      <audio id="recorder-preview" class="hidden" controls></audio>
+      <button id="recorder-save-btn" class="btn btn-start hidden">✅ Use This Recording</button>
+      <button id="recorder-retry-btn" class="btn btn-secondary hidden">🔁 Record Again</button>
+      <button id="close-recorder-modal" class="btn btn-cancel">Cancel</button>
+    </div>
+  </div>
+
+  <!-- ===== END SCREEN ===== -->
+  <div id="end-screen" class="screen hidden">
+    <div class="end-content">
+      <h2>🎉 Show finished!</h2>
+      <p>Great job, DJ!</p>
+      <button id="play-again-btn" class="btn btn-start">Play it again</button>
+      <button id="back-to-builder-btn" class="btn btn-secondary">Build a new show</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
