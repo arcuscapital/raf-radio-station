@@ -67,9 +67,9 @@ function loadSavedShow() {
   return [
     { id: "b1", type: "jingle", label: "Welcome Jingle", mode: "quiet", duration: 3 },
     { id: "b2", type: "songs", count: 4 },
-    { id: "b3", type: "talk", label: "Talk Time – News", mode: "quiet", duration: 15 },
+    { id: "b3", type: "talk", label: "Weather, Traffic, News", mode: "quiet", duration: 15 },
     { id: "b4", type: "songs", count: 3 },
-    { id: "b5", type: "bed", label: "Talk-over Music", mode: "background", duration: 20 },
+    { id: "b5", type: "bed", label: "DJ Talk", mode: "background", duration: 20 },
     { id: "b6", type: "commercial", label: "Commercial Break", mode: "quiet", duration: 10 },
     { id: "b7", type: "songs", count: 3 },
     { id: "b8", type: "jingle", label: "Closing Jingle", mode: "quiet", duration: 3 }
@@ -150,7 +150,7 @@ playlistInput.value = localStorage.getItem("radio_playlist") || playlistInput.va
 bgMusicInput.value = localStorage.getItem("radio_bg_music") || "";
 
 const MODE_LABELS = { quiet: "🤫 Quiet", record: "🎙️ Recorded", background: "🎶 Background" };
-const TYPE_LABELS = { jingle: "Jingle", talk: "Talk Time – News", bed: "Talk-over Music", commercial: "Commercial Break" };
+const TYPE_LABELS = { jingle: "Jingle", talk: "Weather, Traffic, News", bed: "DJ Talk", commercial: "Commercial Break" };
 const TYPE_ICONS = { jingle: "🎤", talk: "🗣️", bed: "🎶", commercial: "📢" };
 
 // ====================== RENDER BLOCKS ======================
@@ -173,7 +173,7 @@ function renderBlocks() {
         <button class="delete-btn" data-action="delete">×</button>
       `;
     } else {
-      leftContent = `<span class="block-icon">${TYPE_ICONS[block.type]}</span> ${block.label || TYPE_LABELS[block.type]} <span class="block-mode-badge">${MODE_LABELS[block.mode] || ""}</span>`;
+      leftContent = `<span class="block-icon">${TYPE_ICONS[block.type]}</span> ${TYPE_LABELS[block.type]} <span class="block-mode-badge">${MODE_LABELS[block.mode] || ""}</span>`;
       rightContent = `<button class="edit-btn" data-action="edit">✎</button><button class="delete-btn" data-action="delete">×</button>`;
     }
 
@@ -225,14 +225,54 @@ function renderBlocks() {
   });
 }
 
+// ====================== MODAL BACK-BUTTON SUPPORT ======================
+// Treats the whole "add/edit a block" flow (add-type -> mode -> duration/recorder)
+// as one logical screen for the phone's back button/gesture: opening any modal in
+// the chain pushes a single history entry, and going back (or tapping Cancel)
+// closes everything and returns to the builder, instead of leaving the page.
+const durationModal = document.getElementById("duration-modal");
+let modalHistoryPushed = false;
+
+function openModalPushHistory() {
+  if (!modalHistoryPushed) {
+    modalHistoryPushed = true;
+    history.pushState({ radioModal: true }, "");
+  }
+}
+
+function hideAllModalsInternal() {
+  addModal.classList.add("hidden");
+  modeModal.classList.add("hidden");
+  durationModal.classList.add("hidden");
+  recorderModal.classList.add("hidden");
+  stopMicStream();
+  if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
+}
+
+function closeAllModals() {
+  hideAllModalsInternal();
+  modeModalTarget = null;
+  if (modalHistoryPushed) {
+    modalHistoryPushed = false;
+    history.back();
+  }
+}
+
+window.addEventListener("popstate", () => {
+  if (modalHistoryPushed) {
+    modalHistoryPushed = false;
+    hideAllModalsInternal();
+    modeModalTarget = null;
+  }
+});
+
 // ====================== ADD BLOCK ======================
 document.getElementById("add-block-btn").addEventListener("click", () => {
+  openModalPushHistory();
   addModal.classList.remove("hidden");
 });
 
-document.getElementById("close-modal").addEventListener("click", () => {
-  addModal.classList.add("hidden");
-});
+document.getElementById("close-modal").addEventListener("click", closeAllModals);
 
 document.querySelectorAll(".block-type-btn").forEach(btn => {
   btn.addEventListener("click", () => {
@@ -241,9 +281,10 @@ document.querySelectorAll(".block-type-btn").forEach(btn => {
     if (type === "songs") {
       blocks.push({ id: makeId(), type, count: 3 });
       renderBlocks(); saveShow();
+      closeAllModals();
       return;
     }
-    const newBlock = { id: makeId(), type, label: TYPE_LABELS[type], mode: null, duration: 15 };
+    const newBlock = { id: makeId(), type, mode: null, duration: 15 };
     openModeModal(newBlock, /* isNew */ true);
   });
 });
@@ -253,17 +294,18 @@ let modeModalTarget = null;
 let modeModalIsNew = false;
 
 function openModeModal(block, isNew = false) {
+  openModalPushHistory();
   modeModalTarget = block;
   modeModalIsNew = isNew;
   document.getElementById("mode-modal-title").textContent =
-    `How should "${block.label || TYPE_LABELS[block.type]}" work?`;
+    `How should "${TYPE_LABELS[block.type]}" work?`;
+  addModal.classList.add("hidden");
+  durationModal.classList.add("hidden");
+  recorderModal.classList.add("hidden");
   modeModal.classList.remove("hidden");
 }
 
-document.getElementById("close-mode-modal").addEventListener("click", () => {
-  modeModal.classList.add("hidden");
-  modeModalTarget = null;
-});
+document.getElementById("close-mode-modal").addEventListener("click", closeAllModals);
 
 document.querySelectorAll(".mode-btn").forEach(btn => {
   btn.addEventListener("click", () => {
@@ -273,11 +315,7 @@ document.querySelectorAll(".mode-btn").forEach(btn => {
     modeModal.classList.add("hidden");
 
     if (mode === "quiet") {
-      const answer = prompt("How many seconds of quiet? (e.g. 15)", block.duration || 15);
-      const secs = parseInt(answer, 10);
-      block.mode = "quiet";
-      block.duration = isNaN(secs) || secs <= 0 ? 15 : Math.min(secs, 120);
-      finalizeBlockAdd(block);
+      openDurationModal(block);
     } else if (mode === "background") {
       block.mode = "background";
       finalizeBlockAdd(block);
@@ -287,13 +325,44 @@ document.querySelectorAll(".mode-btn").forEach(btn => {
   });
 });
 
+// ====================== DURATION MODAL (seconds or minutes) ======================
+const durationValueInput = document.getElementById("duration-value");
+const durationUnitSelect = document.getElementById("duration-unit");
+
+function openDurationModal(block) {
+  modeModalTarget = block;
+  const secs = block.duration || 15;
+  if (secs >= 60 && secs % 60 === 0) {
+    durationValueInput.value = secs / 60;
+    durationUnitSelect.value = "minutes";
+  } else {
+    durationValueInput.value = secs;
+    durationUnitSelect.value = "seconds";
+  }
+  modeModal.classList.add("hidden");
+  durationModal.classList.remove("hidden");
+}
+
+document.getElementById("close-duration-modal").addEventListener("click", closeAllModals);
+
+document.getElementById("duration-save-btn").addEventListener("click", () => {
+  const block = modeModalTarget;
+  if (!block) return;
+  const raw = parseFloat(durationValueInput.value);
+  const value = isNaN(raw) || raw <= 0 ? 15 : raw;
+  const secs = durationUnitSelect.value === "minutes" ? Math.round(value * 60) : Math.round(value);
+  block.mode = "quiet";
+  block.duration = Math.min(secs, 3600);
+  finalizeBlockAdd(block);
+});
+
 function finalizeBlockAdd(block) {
   if (modeModalIsNew) {
     blocks.push(block);
   }
   renderBlocks();
   saveShow();
-  modeModalTarget = null;
+  closeAllModals();
 }
 
 // ====================== RECORDER MODAL ======================
@@ -330,11 +399,7 @@ function resetRecorderUI() {
   if (recordTimerInterval) clearInterval(recordTimerInterval);
 }
 
-document.getElementById("close-recorder-modal").addEventListener("click", () => {
-  stopMicStream();
-  recorderModal.classList.add("hidden");
-  modeModalTarget = null;
-});
+document.getElementById("close-recorder-modal").addEventListener("click", closeAllModals);
 
 function formatTime(s) {
   const m = Math.floor(s / 60).toString().padStart(2, "0");
@@ -738,7 +803,7 @@ function getNextBlockPreview() {
   const next = blocks[currentBlockIndex + 1];
   if (!next) return loopEnabled ? "Loop → start again" : "End of show";
   if (next.type === "songs") return `Play ${next.count} Songs`;
-  return next.label || TYPE_LABELS[next.type];
+  return TYPE_LABELS[next.type];
 }
 
 function setLiveButtonsForBlock(block) {
@@ -754,7 +819,8 @@ async function runCurrentBlock() {
     if (loopEnabled) {
       currentBlockIndex = 0;
       songsPlayedInBlock = 0;
-      showPlaylistOffset = 0;
+      // showPlaylistOffset intentionally NOT reset here: looping the show
+      // should keep playing forward through the playlist, not restart it.
       runCurrentBlock();
       return;
     } else {
@@ -780,7 +846,7 @@ async function runCurrentBlock() {
 
   stopTrackPolling();
   isPlaying = false;
-  const label = block.label || TYPE_LABELS[block.type];
+  const label = TYPE_LABELS[block.type];
 
   if (block.mode === "record") {
     await pauseSpotify();

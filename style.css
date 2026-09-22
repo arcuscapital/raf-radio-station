@@ -487,6 +487,36 @@ header h1 {
   background: #e9ecef;
 }
 
+.duration-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.duration-row input {
+  flex: 1;
+  padding: 14px;
+  border: 2px solid #e0e0e0;
+  border-radius: 12px;
+  font-size: 1.1rem;
+  text-align: center;
+}
+
+.duration-row select {
+  flex: 1;
+  padding: 14px;
+  border: 2px solid #e0e0e0;
+  border-radius: 12px;
+  font-size: 1.1rem;
+  background: white;
+}
+
+.duration-row input:focus,
+.duration-row select:focus {
+  outline: none;
+  border-color: #4A90E2;
+}
+
 .recorder-hint {
   text-align: center;
   color: #7f8c8d;

@@ -103,8 +103,8 @@
       <h3>Add a Block</h3>
       <button class="block-type-btn" data-type="songs">🎵 Play Songs</button>
       <button class="block-type-btn" data-type="jingle">🎤 Jingle</button>
-      <button class="block-type-btn" data-type="talk">🗣️ Talk Time (News)</button>
-      <button class="block-type-btn" data-type="bed">🎶 Talk-over Music</button>
+      <button class="block-type-btn" data-type="talk">🗣️ Weather, Traffic, News</button>
+      <button class="block-type-btn" data-type="bed">🎶 DJ Talk</button>
       <button class="block-type-btn" data-type="commercial">📢 Commercial Break</button>
       <button id="close-modal" class="btn btn-cancel">Cancel</button>
     </div>
@@ -118,6 +118,22 @@
       <button class="mode-btn" data-mode="record">🎙️ Record my own voice</button>
       <button class="mode-btn" data-mode="background">🎶 Background Music</button>
       <button id="close-mode-modal" class="btn btn-cancel">Cancel</button>
+    </div>
+  </div>
+
+  <!-- ===== DURATION MODAL (quiet length: seconds or minutes) ===== -->
+  <div id="duration-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3>How long?</h3>
+      <div class="duration-row">
+        <input type="number" id="duration-value" min="1" max="180" value="15" inputmode="numeric" />
+        <select id="duration-unit">
+          <option value="seconds">seconds</option>
+          <option value="minutes">minutes</option>
+        </select>
+      </div>
+      <button id="duration-save-btn" class="btn btn-start">✅ Save</button>
+      <button id="close-duration-modal" class="btn btn-cancel">Cancel</button>
     </div>
   </div>
 
