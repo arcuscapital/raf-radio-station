@@ -481,12 +481,18 @@ async function refreshTokenIfNeeded() {
 }
 
 // ====================== SPOTIFY PLAYER ======================
+let sdkReady = false;
+let sdkReadyResolve;
+const sdkReadyPromise = new Promise(resolve => { sdkReadyResolve = resolve; });
+
 window.onSpotifyWebPlaybackSDKReady = () => {
-  // Initialized after login in init()
+  sdkReady = true;
+  sdkReadyResolve();
 };
 
 async function initPlayer() {
   if (!accessToken) return;
+  if (!sdkReady) await sdkReadyPromise;
 
   spotifyPlayer = new Spotify.Player({
     name: "My Radio Station",
