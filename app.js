@@ -99,6 +99,7 @@ let activePlaybackTimer = null;
 let activeAudioEl = null;
 let trackPollInterval = null;
 let currentVolumePercent = 80;
+let showPlaylistOffset = 0;
 
 // ====================== SIMPLE TONE JINGLE (fallback, no recording) ======================
 let audioCtx = null;
@@ -608,7 +609,7 @@ function extractPlaylistOrTrackUri(urlOrUri) {
   return null;
 }
 
-async function playContextUri(contextUri, isTrack) {
+async function playContextUri(contextUri, isTrack, offsetPosition = 0) {
   if (!deviceId || !accessToken) return false;
   try {
     await fetch(`https://api.spotify.com/v1/me/player`, {
@@ -617,7 +618,7 @@ async function playContextUri(contextUri, isTrack) {
       body: JSON.stringify({ device_ids: [deviceId], play: false })
     });
     await new Promise(r => setTimeout(r, 400));
-    const body = isTrack ? { uris: [contextUri] } : { context_uri: contextUri, offset: { position: 0 } };
+    const body = isTrack ? { uris: [contextUri] } : { context_uri: contextUri, offset: { position: offsetPosition } };
     await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
       method: "PUT",
       headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
@@ -633,8 +634,10 @@ async function playContextUri(contextUri, isTrack) {
 async function startPlaylistPlayback() {
   const raw = playlistInput ? playlistInput.value.trim() : "";
   const uri = extractPlaylistOrTrackUri(raw) || playlistUri;
+  const isNewPlaylist = uri !== playlistUri;
   playlistUri = uri;
-  const ok = await playContextUri(uri, uri.startsWith("spotify:track:"));
+  if (isNewPlaylist) showPlaylistOffset = 0;
+  const ok = await playContextUri(uri, uri.startsWith("spotify:track:"), showPlaylistOffset);
   if (!ok) setTimeout(onTrackEnded, 10000);
 }
 
@@ -751,6 +754,7 @@ async function runCurrentBlock() {
     if (loopEnabled) {
       currentBlockIndex = 0;
       songsPlayedInBlock = 0;
+      showPlaylistOffset = 0;
       runCurrentBlock();
       return;
     } else {
@@ -835,6 +839,7 @@ function onTrackEnded() {
   const block = blocks[currentBlockIndex];
   if (block && block.type === "songs") {
     songsPlayedInBlock++;
+    showPlaylistOffset++;
     if (songsPlayedInBlock >= block.count) {
       isPlaying = false;
       currentBlockIndex++;
@@ -868,6 +873,7 @@ document.getElementById("start-show-btn").addEventListener("click", async () => 
   saveShow();
   currentBlockIndex = 0;
   songsPlayedInBlock = 0;
+  showPlaylistOffset = 0;
   isPaused = false;
   builderScreen.classList.add("hidden");
   liveScreen.classList.remove("hidden");
@@ -915,6 +921,7 @@ document.getElementById("play-again-btn").addEventListener("click", () => {
   liveScreen.classList.remove("hidden");
   currentBlockIndex = 0;
   songsPlayedInBlock = 0;
+  showPlaylistOffset = 0;
   runCurrentBlock();
 });
 
