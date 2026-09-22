@@ -10,8 +10,6 @@
   <link rel="stylesheet" href="style.css" />
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="icon.png" />
-  <!-- Spotify Web Playback SDK -->
-  <script src="https://sdk.scdn.co/spotify-player.js"></script>
 </head>
 <body>
   <!-- ===== BUILDER SCREEN ===== -->
@@ -61,6 +59,10 @@
     <div class="spotify-status" id="spotify-status">
       <button id="login-btn" class="btn btn-spotify">Connect Spotify</button>
       <span id="spotify-connected" class="hidden">✅ Spotify connected</span>
+      <div id="device-hint" class="device-hint hidden">
+        <p>Open the Spotify app on this phone and press play on any song, then tap Refresh.</p>
+        <button id="refresh-device-btn" class="btn btn-secondary">🔁 Refresh</button>
+      </div>
     </div>
   </div>
 

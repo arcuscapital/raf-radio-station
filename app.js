@@ -90,7 +90,6 @@ let loopEnabled = false;
 let currentBlockIndex = 0;
 let songsPlayedInBlock = 0;
 let isPlaying = false;
-let spotifyPlayer = null;
 let deviceId = null;
 let accessToken = null;
 let isPaused = false;
@@ -98,6 +97,8 @@ let playlistUri = "spotify:playlist:37i9dQZF1E4CPcTtDJiVpn";
 let lastTrackUri = null;
 let activePlaybackTimer = null;
 let activeAudioEl = null;
+let trackPollInterval = null;
+let currentVolumePercent = 80;
 
 // ====================== SIMPLE TONE JINGLE (fallback, no recording) ======================
 let audioCtx = null;
@@ -480,50 +481,58 @@ async function refreshTokenIfNeeded() {
   return !!accessToken;
 }
 
-// ====================== SPOTIFY PLAYER ======================
-let sdkReady = false;
-let sdkReadyResolve;
-const sdkReadyPromise = new Promise(resolve => { sdkReadyResolve = resolve; });
+// ====================== SPOTIFY CONNECT (control the Spotify app on this phone/device) ======================
+// The Web Playback SDK (a browser tab acting as the speaker) is not supported on mobile
+// browsers, so instead we control whichever device already has the real Spotify app open,
+// using the same Spotify Connect mechanism as Spotify's own "cast to a device" feature.
+const deviceHint = document.getElementById("device-hint");
+const loginBtn = document.getElementById("login-btn");
+const spotifyConnectedEl = document.getElementById("spotify-connected");
+const refreshDeviceBtn = document.getElementById("refresh-device-btn");
 
-window.onSpotifyWebPlaybackSDKReady = () => {
-  sdkReady = true;
-  sdkReadyResolve();
-};
+async function fetchDevices() {
+  if (!accessToken) return [];
+  try {
+    const res = await fetch("https://api.spotify.com/v1/me/player/devices", {
+      headers: { "Authorization": `Bearer ${accessToken}` }
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.devices || [];
+  } catch (e) {
+    return [];
+  }
+}
 
-async function initPlayer() {
-  if (!accessToken) return;
-  if (!sdkReady) await sdkReadyPromise;
+function showConnected() {
+  loginBtn.classList.add("hidden");
+  deviceHint.classList.add("hidden");
+  spotifyConnectedEl.classList.remove("hidden");
+}
 
-  spotifyPlayer = new Spotify.Player({
-    name: "My Radio Station",
-    getOAuthToken: cb => { cb(accessToken); },
-    volume: 0.8
-  });
+function showNeedsDevice() {
+  loginBtn.classList.add("hidden");
+  spotifyConnectedEl.classList.add("hidden");
+  deviceHint.classList.remove("hidden");
+}
 
-  spotifyPlayer.addListener("ready", ({ device_id }) => {
-    deviceId = device_id;
-    document.getElementById("login-btn").classList.add("hidden");
-    document.getElementById("spotify-connected").classList.remove("hidden");
-  });
+async function ensureDevice() {
+  if (!accessToken) return false;
+  const devices = await fetchDevices();
+  if (devices.length === 0) {
+    deviceId = null;
+    showNeedsDevice();
+    return false;
+  }
+  const active = devices.find(d => d.is_active) || devices[0];
+  deviceId = active.id;
+  currentVolumePercent = typeof active.volume_percent === "number" ? active.volume_percent : 80;
+  showConnected();
+  return true;
+}
 
-  spotifyPlayer.addListener("not_ready", () => {});
-
-  spotifyPlayer.addListener("player_state_changed", state => {
-    if (!state) return;
-    const currentUri = state.track_window?.current_track?.uri;
-    if (currentUri && currentUri !== lastTrackUri) {
-      if (lastTrackUri !== null && isPlaying) {
-        onTrackEnded();
-      }
-      lastTrackUri = currentUri;
-      const track = state.track_window.current_track;
-      if (track && statusSub) {
-        statusSub.textContent = track.name + " – " + (track.artists?.[0]?.name || "");
-      }
-    }
-  });
-
-  await spotifyPlayer.connect();
+if (refreshDeviceBtn) {
+  refreshDeviceBtn.addEventListener("click", () => ensureDevice());
 }
 
 function extractPlaylistOrTrackUri(urlOrUri) {
@@ -570,27 +579,81 @@ async function startPlaylistPlayback() {
 async function playNextSpotifyTrack() {
   if (songsPlayedInBlock === 0) {
     await startPlaylistPlayback();
-  } else if (spotifyPlayer) {
-    try { await spotifyPlayer.nextTrack(); } catch (e) { console.error(e); }
+  } else {
+    await nextTrackSpotify();
   }
+}
+
+async function nextTrackSpotify() {
+  if (!deviceId || !accessToken) return;
+  try {
+    await fetch(`https://api.spotify.com/v1/me/player/next?device_id=${deviceId}`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${accessToken}` }
+    });
+  } catch (e) {}
 }
 
 async function pauseSpotify() {
-  if (spotifyPlayer) {
-    try { await spotifyPlayer.pause(); } catch (e) {}
-  }
+  if (!deviceId || !accessToken) return;
+  try {
+    await fetch(`https://api.spotify.com/v1/me/player/pause?device_id=${deviceId}`, {
+      method: "PUT",
+      headers: { "Authorization": `Bearer ${accessToken}` }
+    });
+  } catch (e) {}
 }
 
 async function resumeSpotify() {
-  if (spotifyPlayer) {
-    try { await spotifyPlayer.resume(); } catch (e) {}
-  }
+  if (!deviceId || !accessToken) return;
+  try {
+    await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
+      method: "PUT",
+      headers: { "Authorization": `Bearer ${accessToken}` }
+    });
+  } catch (e) {}
 }
 
-async function setSpotifyVolume(v) {
-  if (spotifyPlayer) {
-    try { await spotifyPlayer.setVolume(v); } catch (e) {}
-  }
+async function setSpotifyVolume(percent0to1) {
+  if (!deviceId || !accessToken) return;
+  currentVolumePercent = Math.round(percent0to1 * 100);
+  try {
+    await fetch(`https://api.spotify.com/v1/me/player/volume?volume_percent=${currentVolumePercent}&device_id=${deviceId}`, {
+      method: "PUT",
+      headers: { "Authorization": `Bearer ${accessToken}` }
+    });
+  } catch (e) {}
+}
+
+// ====================== TRACK-CHANGE POLLING ======================
+// Spotify Connect (unlike the Web Playback SDK) doesn't push track-change
+// events to us, so while a "songs" block is playing we poll for the
+// currently playing track to detect when it changes.
+function startTrackPolling() {
+  stopTrackPolling();
+  trackPollInterval = setInterval(async () => {
+    if (!isPlaying || !accessToken) return;
+    try {
+      const res = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {
+        headers: { "Authorization": `Bearer ${accessToken}` }
+      });
+      if (res.status === 204 || !res.ok) return;
+      const data = await res.json();
+      const uri = data.item?.uri;
+      if (uri && uri !== lastTrackUri) {
+        const isFirst = lastTrackUri === null;
+        lastTrackUri = uri;
+        if (data.item && statusSub) {
+          statusSub.textContent = data.item.name + " – " + (data.item.artists?.[0]?.name || "");
+        }
+        if (!isFirst) onTrackEnded();
+      }
+    } catch (e) {}
+  }, 2500);
+}
+
+function stopTrackPolling() {
+  if (trackPollInterval) { clearInterval(trackPollInterval); trackPollInterval = null; }
 }
 
 // ====================== SHOW ENGINE ======================
@@ -645,9 +708,11 @@ async function runCurrentBlock() {
     updateLiveUI("Now Playing", `Song 1 of ${block.count}`, "Starting playlist...", 5);
     isPlaying = true;
     await playNextSpotifyTrack();
+    startTrackPolling();
     return;
   }
 
+  stopTrackPolling();
   isPlaying = false;
   const label = block.label || TYPE_LABELS[block.type];
 
@@ -729,6 +794,11 @@ document.getElementById("start-show-btn").addEventListener("click", async () => 
     alert("Please connect Spotify first!");
     return;
   }
+  const hasDevice = await ensureDevice();
+  if (!hasDevice) {
+    alert("Open the Spotify app on this phone and press play on any song, then try again.");
+    return;
+  }
   if (blocks.length === 0) {
     alert("Add at least one block!");
     return;
@@ -751,13 +821,8 @@ finishedTalkingBtn.addEventListener("click", async () => {
 });
 
 skipSongBtn.addEventListener("click", async () => {
-  if (spotifyPlayer) {
-    try {
-      await spotifyPlayer.nextTrack();
-      return; // player_state_changed listener advances the counter
-    } catch (e) {}
-  }
-  onTrackEnded();
+  await nextTrackSpotify();
+  // the track-change poll advances the counter once it sees the new track
 });
 
 document.getElementById("pause-btn").addEventListener("click", async () => {
@@ -776,6 +841,7 @@ document.getElementById("pause-btn").addEventListener("click", async () => {
 
 document.getElementById("stop-show-btn").addEventListener("click", async () => {
   clearActivePlayback();
+  stopTrackPolling();
   await pauseSpotify();
   isPlaying = false;
   liveScreen.classList.add("hidden");
@@ -805,7 +871,7 @@ async function init() {
 
   const justLoggedIn = await handleRedirect();
   if (justLoggedIn || await refreshTokenIfNeeded()) {
-    await initPlayer();
+    await ensureDevice();
   }
 }
 

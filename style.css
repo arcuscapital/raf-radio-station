@@ -332,6 +332,23 @@ header h1 {
   display: none;
 }
 
+#spotify-connected {
+  display: inline-block;
+  color: #1DB954;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.device-hint {
+  margin-top: 12px;
+}
+
+.device-hint p {
+  color: #7f8c8d;
+  font-size: 0.9rem;
+  margin-bottom: 10px;
+}
+
 /* Live screen */
 .status-card {
   background: white;
