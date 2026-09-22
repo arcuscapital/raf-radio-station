@@ -465,20 +465,52 @@ async function handleRedirect() {
 
   const data = await res.json();
   if (data.access_token) {
-    accessToken = data.access_token;
-    localStorage.setItem("spotify_access_token", accessToken);
-    if (data.refresh_token) {
-      localStorage.setItem("spotify_refresh_token", data.refresh_token);
-    }
+    saveToken(data);
     window.history.replaceState({}, document.title, window.location.pathname);
     return true;
   }
   return false;
 }
 
+function saveToken(data) {
+  accessToken = data.access_token;
+  localStorage.setItem("spotify_access_token", accessToken);
+  localStorage.setItem("spotify_token_expires_at", String(Date.now() + (data.expires_in || 3600) * 1000));
+  if (data.refresh_token) {
+    localStorage.setItem("spotify_refresh_token", data.refresh_token);
+  }
+}
+
+async function refreshAccessToken() {
+  const refreshToken = localStorage.getItem("spotify_refresh_token");
+  if (!refreshToken) return false;
+  try {
+    const res = await fetch("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: CLIENT_ID,
+        grant_type: "refresh_token",
+        refresh_token: refreshToken
+      })
+    });
+    const data = await res.json();
+    if (data.access_token) {
+      saveToken(data);
+      return true;
+    }
+  } catch (e) {}
+  return false;
+}
+
 async function refreshTokenIfNeeded() {
   accessToken = localStorage.getItem("spotify_access_token");
-  return !!accessToken;
+  if (!accessToken) return false;
+  const expiresAt = parseInt(localStorage.getItem("spotify_token_expires_at") || "0", 10);
+  if (Date.now() > expiresAt - 60000) {
+    return await refreshAccessToken();
+  }
+  return true;
 }
 
 // ====================== SPOTIFY CONNECT (control the Spotify app on this phone/device) ======================
@@ -491,16 +523,23 @@ const spotifyConnectedEl = document.getElementById("spotify-connected");
 const refreshDeviceBtn = document.getElementById("refresh-device-btn");
 
 async function fetchDevices() {
-  if (!accessToken) return [];
+  if (!accessToken) return { devices: [], error: "not logged in" };
   try {
-    const res = await fetch("https://api.spotify.com/v1/me/player/devices", {
+    let res = await fetch("https://api.spotify.com/v1/me/player/devices", {
       headers: { "Authorization": `Bearer ${accessToken}` }
     });
-    if (!res.ok) return [];
+    if (res.status === 401) {
+      const refreshed = await refreshAccessToken();
+      if (!refreshed) return { devices: [], error: "your Spotify login expired — tap Connect Spotify again" };
+      res = await fetch("https://api.spotify.com/v1/me/player/devices", {
+        headers: { "Authorization": `Bearer ${accessToken}` }
+      });
+    }
+    if (!res.ok) return { devices: [], error: `Spotify returned an error (${res.status})` };
     const data = await res.json();
-    return data.devices || [];
+    return { devices: data.devices || [], error: null };
   } catch (e) {
-    return [];
+    return { devices: [], error: "couldn't reach Spotify (check your internet connection)" };
   }
 }
 
@@ -510,15 +549,38 @@ function showConnected() {
   spotifyConnectedEl.classList.remove("hidden");
 }
 
-function showNeedsDevice() {
+function showNeedsDevice(message) {
   loginBtn.classList.add("hidden");
   spotifyConnectedEl.classList.add("hidden");
   deviceHint.classList.remove("hidden");
+  const hintText = document.getElementById("device-hint-text");
+  if (hintText) {
+    hintText.textContent = message ||
+      "Open the Spotify app on this phone and press play on any song, then tap Refresh.";
+  }
+}
+
+function showLoggedOut() {
+  loginBtn.classList.remove("hidden");
+  spotifyConnectedEl.classList.add("hidden");
+  deviceHint.classList.add("hidden");
 }
 
 async function ensureDevice() {
-  if (!accessToken) return false;
-  const devices = await fetchDevices();
+  if (!accessToken) { showLoggedOut(); return false; }
+  const ok = await refreshTokenIfNeeded();
+  if (!ok) {
+    accessToken = null;
+    localStorage.removeItem("spotify_access_token");
+    showLoggedOut();
+    return false;
+  }
+  const { devices, error } = await fetchDevices();
+  if (error) {
+    deviceId = null;
+    showNeedsDevice(`Couldn't check for a Spotify device: ${error}.`);
+    return false;
+  }
   if (devices.length === 0) {
     deviceId = null;
     showNeedsDevice();
@@ -869,8 +931,9 @@ bgMusicInput.addEventListener("change", saveShow);
 async function init() {
   renderBlocks();
 
-  const justLoggedIn = await handleRedirect();
-  if (justLoggedIn || await refreshTokenIfNeeded()) {
+  await handleRedirect();
+  accessToken = localStorage.getItem("spotify_access_token");
+  if (accessToken) {
     await ensureDevice();
   }
 }
