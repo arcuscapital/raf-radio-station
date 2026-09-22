@@ -388,11 +388,24 @@ header h1 {
   margin-bottom: 16px;
 }
 
+.progress-bar-hit {
+  padding: 14px 0;
+  margin: -14px 0;
+  cursor: pointer;
+  touch-action: none;
+}
+
 .progress-bar {
   height: 8px;
   background: #ecf0f1;
   border-radius: 4px;
   overflow: hidden;
+  transition: height 0.15s, box-shadow 0.15s;
+}
+
+.progress-bar.scrubbing {
+  height: 14px;
+  box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.25);
 }
 
 .progress-fill {
@@ -401,6 +414,10 @@ header h1 {
   background: linear-gradient(90deg, #e74c3c, #f39c12, #2ecc71);
   border-radius: 4px;
   transition: width 0.3s;
+}
+
+.progress-bar.scrubbing .progress-fill {
+  transition: none;
 }
 
 .time-row {

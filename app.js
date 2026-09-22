@@ -112,6 +112,7 @@ let trackDurationMs = 0;    // for the songs progress bar
 let trackProgressMsAtPoll = 0;
 let trackProgressPolledAt = 0;
 let progressTickInterval = null;
+let isScrubbing = false; // true while the child is dragging the progress bar
 
 // ====================== SIMPLE TONE JINGLE (fallback, no recording) ======================
 let audioCtx = null;
@@ -942,6 +943,16 @@ async function setRepeatMode(state) {
   } catch (e) {}
 }
 
+async function seekSpotify(positionMs) {
+  if (!deviceId || !accessToken) return;
+  try {
+    await fetch(`https://api.spotify.com/v1/me/player/seek?position_ms=${Math.round(positionMs)}&device_id=${deviceId}`, {
+      method: "PUT",
+      headers: { "Authorization": `Bearer ${accessToken}` }
+    });
+  } catch (e) {}
+}
+
 // ====================== TRACK-CHANGE POLLING ======================
 // Spotify Connect (unlike the Web Playback SDK) doesn't push track-change
 // events to us, so while a "songs" block is playing we poll for the
@@ -976,7 +987,7 @@ async function pollCurrentTrack() {
 function startProgressTicker() {
   stopProgressTicker();
   progressTickInterval = setInterval(() => {
-    if (!trackDurationMs) return;
+    if (!trackDurationMs || isScrubbing) return;
     const estMs = Math.min(trackDurationMs, trackProgressMsAtPoll + (Date.now() - trackProgressPolledAt));
     updateProgress(estMs / 1000, trackDurationMs / 1000);
   }, 250);
@@ -1049,6 +1060,81 @@ function setLiveButtonsForBlock(block) {
   skipSongBtn.classList.toggle("hidden", !isSongs);
   finishedTalkingBtn.classList.toggle("hidden", isSongs);
 }
+
+// ====================== PROGRESS BAR SCRUBBING (press and drag to seek) ======================
+let scrubDurationSec = 0;
+
+function getCurrentDurationSec() {
+  const block = blocks[currentBlockIndex];
+  if (!block) return 0;
+  if (block.type === "songs") return trackDurationMs ? trackDurationMs / 1000 : 0;
+  if (block.mode === "record") return activeAudioEl && isFinite(activeAudioEl.duration) ? activeAudioEl.duration : 0;
+  return blockDurationSeconds || 0; // quiet / background
+}
+
+function scrubFractionFromEvent(e, barEl) {
+  const rect = barEl.getBoundingClientRect();
+  const x = Math.min(Math.max(e.clientX - rect.left, 0), rect.width);
+  return rect.width > 0 ? x / rect.width : 0;
+}
+
+async function commitScrub(targetSec) {
+  const block = blocks[currentBlockIndex];
+  if (!block) return;
+  const clamped = Math.max(0, Math.min(targetSec, scrubDurationSec));
+
+  if (block.type === "songs") {
+    trackProgressMsAtPoll = clamped * 1000;
+    trackProgressPolledAt = Date.now();
+    updateProgress(clamped, scrubDurationSec);
+    await seekSpotify(clamped * 1000);
+  } else if (block.mode === "record" && activeAudioEl) {
+    activeAudioEl.currentTime = clamped;
+    updateProgress(clamped, scrubDurationSec);
+  } else {
+    // quiet or background — there's no real media to seek, just fast-forward/rewind our own countdown
+    blockRemainingSeconds = Math.max(0, Math.round(scrubDurationSec - clamped));
+    updateProgress(clamped, scrubDurationSec);
+    if (block.mode === "background") await seekSpotify(clamped * 1000);
+  }
+}
+
+function setupProgressScrubbing() {
+  const hitEl = document.getElementById("progress-bar-hit");
+  const barEl = document.getElementById("progress-bar");
+  if (!hitEl || !barEl) return;
+
+  hitEl.addEventListener("pointerdown", (e) => {
+    const duration = getCurrentDurationSec();
+    if (!duration || duration <= 0) return;
+    isScrubbing = true;
+    scrubDurationSec = duration;
+    barEl.classList.add("scrubbing");
+    try { hitEl.setPointerCapture(e.pointerId); } catch (err) {}
+    updateProgress(scrubFractionFromEvent(e, barEl) * scrubDurationSec, scrubDurationSec);
+  });
+
+  hitEl.addEventListener("pointermove", (e) => {
+    if (!isScrubbing) return;
+    updateProgress(scrubFractionFromEvent(e, barEl) * scrubDurationSec, scrubDurationSec);
+  });
+
+  function endScrub(e) {
+    if (!isScrubbing) return;
+    isScrubbing = false;
+    barEl.classList.remove("scrubbing");
+    const targetSec = scrubFractionFromEvent(e, barEl) * scrubDurationSec;
+    commitScrub(targetSec);
+  }
+
+  hitEl.addEventListener("pointerup", endScrub);
+  hitEl.addEventListener("pointercancel", () => {
+    isScrubbing = false;
+    barEl.classList.remove("scrubbing");
+  });
+}
+
+setupProgressScrubbing();
 
 // ====================== LIVE-SCREEN TIMETABLE ======================
 const TIMETABLE_SHORT_LABELS = { jingle: "Jingle", talk: "News", bed: "DJ Talk", commercial: "Ad Break" };
@@ -1145,7 +1231,7 @@ async function runCurrentBlock() {
     const audio = new Audio(URL.createObjectURL(blob));
     activeAudioEl = audio;
     audio.addEventListener("loadedmetadata", () => updateProgress(0, audio.duration));
-    audio.addEventListener("timeupdate", () => updateProgress(audio.currentTime, audio.duration));
+    audio.addEventListener("timeupdate", () => { if (!isScrubbing) updateProgress(audio.currentTime, audio.duration); });
     audio.addEventListener("ended", () => {
       activeAudioEl = null;
       currentBlockIndex++;
@@ -1164,6 +1250,7 @@ async function runCurrentBlock() {
     }
     updateProgress(blockDurationSeconds - blockRemainingSeconds, blockDurationSeconds);
     const tick = () => {
+      if (isScrubbing) { activePlaybackTimer = setTimeout(tick, 200); return; }
       blockRemainingSeconds--;
       updateProgress(blockDurationSeconds - blockRemainingSeconds, blockDurationSeconds);
       if (blockRemainingSeconds <= 0) {
@@ -1209,6 +1296,7 @@ async function runCurrentBlock() {
     updateLiveUI(label, block.type === "jingle" ? "🎶 Jingle time!" : "🤫 Shhh...", "Press green when done");
     updateProgress(blockDurationSeconds - blockRemainingSeconds, blockDurationSeconds);
     const tick = () => {
+      if (isScrubbing) { activePlaybackTimer = setTimeout(tick, 200); return; }
       blockRemainingSeconds--;
       updateProgress(blockDurationSeconds - blockRemainingSeconds, blockDurationSeconds);
       if (blockRemainingSeconds <= 0) {
@@ -1319,6 +1407,7 @@ document.getElementById("pause-btn").addEventListener("click", async () => {
 });
 
 document.getElementById("stop-show-btn").addEventListener("click", exitToBuilder);
+document.getElementById("modify-session-btn").addEventListener("click", exitToBuilder);
 
 document.getElementById("play-again-btn").addEventListener("click", () => {
   pushShowHistory(); // no-op if already pushed; keeps a single "back → home" level
