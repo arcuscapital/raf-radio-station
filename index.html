@@ -14,19 +14,102 @@
 <body>
   <!-- ===== SPLASH SCREEN ===== -->
   <div id="splash-screen" class="screen splash-screen">
+    <!-- Shared shapes for the note/spark burst -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <defs>
+        <symbol id="music-note" viewBox="0 0 40 50">
+          <ellipse cx="11" cy="40" rx="9" ry="6.5" transform="rotate(-18 11 40)" fill="currentColor"/>
+          <rect x="17" y="3" width="4.5" height="38" rx="2.2" fill="currentColor"/>
+          <path d="M21.5 3 C34 6 36.5 20 24 27 C30 19 28 8 21.5 11 Z" fill="currentColor"/>
+        </symbol>
+        <symbol id="spark-star" viewBox="0 0 20 20">
+          <path d="M10 0 L12.2 7.8 L20 10 L12.2 12.2 L10 20 L7.8 12.2 L0 10 L7.8 7.8 Z" fill="currentColor"/>
+        </symbol>
+      </defs>
+    </svg>
+
     <div class="splash-stage">
-      <div class="vinyl">💿</div>
       <div class="radio-wrap">
-        <span class="note note1">🎵</span>
-        <span class="note note2">🎶</span>
-        <span class="note note3">🎼</span>
-        <span class="note note4">🎵</span>
-        <div class="radio-big">📻</div>
+        <svg class="note note1" viewBox="0 0 40 50"><use href="#music-note"/></svg>
+        <svg class="note note2" viewBox="0 0 40 50"><use href="#music-note"/></svg>
+        <svg class="note note3" viewBox="0 0 40 50"><use href="#music-note"/></svg>
+        <svg class="note note4" viewBox="0 0 40 50"><use href="#music-note"/></svg>
+        <svg class="note note5" viewBox="0 0 40 50"><use href="#music-note"/></svg>
+        <svg class="spark spark1" viewBox="0 0 20 20"><use href="#spark-star"/></svg>
+        <svg class="spark spark2" viewBox="0 0 20 20"><use href="#spark-star"/></svg>
+        <svg class="spark spark3" viewBox="0 0 20 20"><use href="#spark-star"/></svg>
+
+        <svg class="radio-big" viewBox="0 -22 200 152">
+          <!-- feet -->
+          <rect x="38" y="122" width="14" height="10" rx="4" fill="#2d5f8a"/>
+          <rect x="148" y="122" width="14" height="10" rx="4" fill="#2d5f8a"/>
+          <!-- antenna -->
+          <line x1="150" y1="40" x2="180" y2="-12" stroke="#2d5f8a" stroke-width="5" stroke-linecap="round"/>
+          <circle cx="180" cy="-12" r="5.5" fill="#F5A623"/>
+          <!-- handle -->
+          <path d="M55 40 C55 14 145 14 145 40" fill="none" stroke="#2d5f8a" stroke-width="8" stroke-linecap="round"/>
+          <!-- body -->
+          <rect x="20" y="38" width="160" height="90" rx="24" fill="#4A90E2"/>
+          <rect x="20" y="38" width="160" height="90" rx="24" fill="none" stroke="#2d5f8a" stroke-width="3"/>
+          <!-- speaker -->
+          <circle cx="68" cy="86" r="30" fill="#1e3a5f"/>
+          <circle cx="68" cy="86" r="30" fill="none" stroke="#173049" stroke-width="2"/>
+          <rect x="60" y="66" width="5" height="40" rx="2.5" fill="#3a6a94" opacity="0.9"/>
+          <rect x="70" y="66" width="5" height="40" rx="2.5" fill="#3a6a94" opacity="0.9"/>
+          <rect x="80" y="66" width="5" height="40" rx="2.5" fill="#3a6a94" opacity="0.9"/>
+          <!-- dials -->
+          <circle cx="140" cy="72" r="14" fill="#F5A623" stroke="#fff" stroke-width="3"/>
+          <circle cx="140" cy="104" r="9" fill="#E74C3C" stroke="#fff" stroke-width="2.5"/>
+        </svg>
       </div>
+
       <div class="dj-wrap">
-        <span class="speech-bubble">🎶</span>
-        <span class="dj">🧑‍🎤</span>
-        <span class="mic">🎤</span>
+        <svg class="dj-svg" viewBox="0 0 240 210">
+          <circle cx="120" cy="118" r="92" fill="#9B59B6"/>
+          <circle cx="120" cy="118" r="92" fill="none" stroke="#7d3f9c" stroke-width="4"/>
+
+          <!-- turntables -->
+          <g>
+            <circle cx="42" cy="168" r="28" fill="#26232f"/>
+            <circle cx="42" cy="168" r="10" fill="#F5A623"/>
+            <circle cx="198" cy="168" r="28" fill="#26232f"/>
+            <circle cx="198" cy="168" r="10" fill="#F5A623"/>
+          </g>
+
+          <g class="dj-body-group">
+            <!-- left arm (still, resting) -->
+            <path d="M96 128 C78 138 62 150 50 160" fill="none" stroke="#4A90E2" stroke-width="16" stroke-linecap="round"/>
+            <circle cx="48" cy="162" r="11" fill="#FFD9A0"/>
+
+            <!-- torso -->
+            <rect x="90" y="98" width="60" height="68" rx="20" fill="#4A90E2"/>
+            <circle cx="120" cy="122" r="9" fill="#F5A623"/>
+
+            <!-- head -->
+            <circle cx="120" cy="66" r="34" fill="#FFD9A0"/>
+            <!-- ear headphone cups (behind cap edges) -->
+            <circle cx="88" cy="70" r="12" fill="#F5A623"/>
+            <circle cx="152" cy="70" r="12" fill="#F5A623"/>
+            <!-- cap: rounded dome sitting on top of the head, plus a front brim -->
+            <path d="M84 62 C84 28 156 28 156 62 C156 54 84 54 84 62 Z" fill="#2d5f8a"/>
+            <ellipse cx="120" cy="42" rx="36" ry="24" fill="#3a72a8"/>
+            <path d="M84 60 C84 26 156 26 156 60 L156 52 C156 52 120 40 84 52 Z" fill="#2d5f8a"/>
+            <ellipse cx="94" cy="60" rx="24" ry="10" fill="#2d5f8a"/>
+            <circle cx="120" cy="20" r="4" fill="#3a72a8"/>
+            <!-- face -->
+            <path d="M104 66 Q110 71 116 66" fill="none" stroke="#1e3a5f" stroke-width="3.4" stroke-linecap="round"/>
+            <path d="M124 66 Q130 71 136 66" fill="none" stroke="#1e3a5f" stroke-width="3.4" stroke-linecap="round"/>
+            <path d="M104 80 Q120 95 136 80" fill="none" stroke="#1e3a5f" stroke-width="4" stroke-linecap="round"/>
+            <circle cx="100" cy="76" r="5" fill="#ff9d9d" opacity="0.6"/>
+            <circle cx="140" cy="76" r="5" fill="#ff9d9d" opacity="0.6"/>
+          </g>
+
+          <!-- scratching hand -->
+          <g class="dj-hand-right">
+            <path d="M144 128 C162 136 178 148 190 158" fill="none" stroke="#4A90E2" stroke-width="16" stroke-linecap="round"/>
+            <circle cx="192" cy="160" r="11" fill="#FFD9A0"/>
+          </g>
+        </svg>
       </div>
     </div>
     <h1 class="splash-title">My Radio Station</h1>

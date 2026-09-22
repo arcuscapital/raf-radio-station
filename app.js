@@ -1050,8 +1050,8 @@ const splashScreen = document.getElementById("splash-screen");
 const splashPhraseEl = document.getElementById("splash-phrase");
 const splashTapHint = document.getElementById("splash-tap-hint");
 
-const SPLASH_DURATION_MS = 4000;
-const SPLASH_TAP_HINT_DELAY_MS = 1500;
+const SPLASH_DURATION_MS = 4200;
+const SPLASH_TAP_HINT_DELAY_MS = 1900;
 const SPLASH_PHRASES = [
   "Warming up the mic",
   "Tuning the antenna",
