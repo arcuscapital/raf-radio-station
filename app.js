@@ -1042,4 +1042,53 @@ async function init() {
   }
 }
 
+// ====================== SPLASH SCREEN ======================
+// A short, fun animation shown when the app is opened (from the home-screen
+// icon or a fresh page load) — skipped when we're mid-way through the
+// Spotify login redirect so that flow isn't interrupted.
+const splashScreen = document.getElementById("splash-screen");
+const splashPhraseEl = document.getElementById("splash-phrase");
+const splashTapHint = document.getElementById("splash-tap-hint");
+
+const SPLASH_DURATION_MS = 4000;
+const SPLASH_TAP_HINT_DELAY_MS = 1500;
+const SPLASH_PHRASES = [
+  "Warming up the mic",
+  "Tuning the antenna",
+  "Cueing up the tunes",
+  "Dusting off the turntable"
+];
+
+function runSplashScreen() {
+  const isSpotifyRedirect = new URLSearchParams(window.location.search).has("code");
+  if (isSpotifyRedirect) {
+    splashScreen.classList.add("hidden");
+    builderScreen.classList.remove("hidden");
+    return;
+  }
+
+  let phraseIndex = 0;
+  const phraseInterval = setInterval(() => {
+    phraseIndex = (phraseIndex + 1) % SPLASH_PHRASES.length;
+    splashPhraseEl.textContent = SPLASH_PHRASES[phraseIndex];
+  }, 900);
+
+  let finished = false;
+  function finishSplash() {
+    if (finished) return;
+    finished = true;
+    clearInterval(phraseInterval);
+    splashScreen.classList.add("splash-fade-out");
+    setTimeout(() => {
+      splashScreen.classList.add("hidden");
+      builderScreen.classList.remove("hidden");
+    }, 400);
+  }
+
+  setTimeout(finishSplash, SPLASH_DURATION_MS);
+  setTimeout(() => splashTapHint.classList.remove("hidden"), SPLASH_TAP_HINT_DELAY_MS);
+  splashScreen.addEventListener("click", finishSplash, { once: true });
+}
+
+runSplashScreen();
 init();

@@ -12,8 +12,30 @@
   <link rel="apple-touch-icon" href="icon.png" />
 </head>
 <body>
+  <!-- ===== SPLASH SCREEN ===== -->
+  <div id="splash-screen" class="screen splash-screen">
+    <div class="splash-stage">
+      <div class="vinyl">💿</div>
+      <div class="radio-wrap">
+        <span class="note note1">🎵</span>
+        <span class="note note2">🎶</span>
+        <span class="note note3">🎼</span>
+        <span class="note note4">🎵</span>
+        <div class="radio-big">📻</div>
+      </div>
+      <div class="dj-wrap">
+        <span class="speech-bubble">🎶</span>
+        <span class="dj">🧑‍🎤</span>
+        <span class="mic">🎤</span>
+      </div>
+    </div>
+    <h1 class="splash-title">My Radio Station</h1>
+    <p class="splash-loading"><span id="splash-phrase">Warming up the mic</span><span class="dots">...</span></p>
+    <p class="splash-tap-hint hidden" id="splash-tap-hint">Tap to start!</p>
+  </div>
+
   <!-- ===== BUILDER SCREEN ===== -->
-  <div id="builder-screen" class="screen">
+  <div id="builder-screen" class="screen hidden">
     <header>
       <div class="logo">
         <span class="radio-icon">📻</span>
