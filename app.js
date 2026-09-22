@@ -108,7 +108,6 @@ let showInProgress = false; // true once a show has started, so Back/Stop can re
 let isResuming = false;     // set for one runCurrentBlock() call when continuing a paused block
 let blockRemainingSeconds = null; // quiet-mode countdown, survives pausing so it can resume
 let blockDurationSeconds = null;
-let backgroundElapsedSeconds = null; // open-ended background-mode elapsed time
 let trackDurationMs = 0;    // for the songs progress bar
 let trackProgressMsAtPoll = 0;
 let trackProgressPolledAt = 0;
@@ -484,10 +483,9 @@ document.querySelectorAll(".mode-btn").forEach(btn => {
     modeModal.classList.add("hidden");
 
     if (mode === "quiet") {
-      openDurationModal(block);
+      openDurationModal(block, "quiet");
     } else if (mode === "background") {
-      block.mode = "background";
-      finalizeBlockAdd(block);
+      openDurationModal(block, "background");
     } else if (mode === "record") {
       openRecorderModal(block);
     }
@@ -495,11 +493,17 @@ document.querySelectorAll(".mode-btn").forEach(btn => {
 });
 
 // ====================== DURATION MODAL (seconds or minutes) ======================
+// Used for both "quiet" (silence) and "background" (music) blocks — background
+// music doesn't have to run for its own full length: if the chosen duration is
+// shorter it just gets cut off, and if it's longer Spotify is told to repeat
+// the track/playlist so the music loops for as long as needed.
 const durationValueInput = document.getElementById("duration-value");
 const durationUnitSelect = document.getElementById("duration-unit");
+let pendingDurationMode = "quiet";
 
-function openDurationModal(block) {
+function openDurationModal(block, mode) {
   modeModalTarget = block;
+  pendingDurationMode = mode;
   const secs = block.duration || 15;
   if (secs >= 60 && secs % 60 === 0) {
     durationValueInput.value = secs / 60;
@@ -508,6 +512,8 @@ function openDurationModal(block) {
     durationValueInput.value = secs;
     durationUnitSelect.value = "seconds";
   }
+  document.getElementById("duration-modal-title").textContent =
+    mode === "background" ? "How long should the music play?" : "How long?";
   modeModal.classList.add("hidden");
   durationModal.classList.remove("hidden");
 }
@@ -520,7 +526,7 @@ document.getElementById("duration-save-btn").addEventListener("click", () => {
   const raw = parseFloat(durationValueInput.value);
   const value = isNaN(raw) || raw <= 0 ? 15 : raw;
   const secs = durationUnitSelect.value === "minutes" ? Math.round(value * 60) : Math.round(value);
-  block.mode = "quiet";
+  block.mode = pendingDurationMode;
   block.duration = Math.min(secs, 3600);
   finalizeBlockAdd(block);
 });
@@ -924,6 +930,18 @@ async function setSpotifyVolume(percent0to1) {
   } catch (e) {}
 }
 
+// state: "track" | "context" | "off" — used so background music can loop for
+// as long as its block's duration needs, even past the track/playlist's own length.
+async function setRepeatMode(state) {
+  if (!deviceId || !accessToken) return;
+  try {
+    await fetch(`https://api.spotify.com/v1/me/player/repeat?state=${state}&device_id=${deviceId}`, {
+      method: "PUT",
+      headers: { "Authorization": `Bearer ${accessToken}` }
+    });
+  } catch (e) {}
+}
+
 // ====================== TRACK-CHANGE POLLING ======================
 // Spotify Connect (unlike the Web Playback SDK) doesn't push track-change
 // events to us, so while a "songs" block is playing we poll for the
@@ -1070,7 +1088,6 @@ async function runCurrentBlock() {
       showInProgress = false;
       blockRemainingSeconds = null;
       blockDurationSeconds = null;
-      backgroundElapsedSeconds = null;
       activeAudioEl = null;
       liveScreen.classList.add("hidden");
       endScreen.classList.remove("hidden");
@@ -1093,6 +1110,10 @@ async function runCurrentBlock() {
     if (resuming) {
       await resumeSpotify();
     } else {
+      // Defensive: a previous background-music block may have left Spotify
+      // set to repeat a single track/context, which would otherwise trap
+      // playback on the first song instead of moving through the playlist.
+      await setRepeatMode("off");
       await playNextSpotifyTrack();
     }
     startTrackPolling();
@@ -1136,12 +1157,24 @@ async function runCurrentBlock() {
   }
   else if (block.mode === "background") {
     await pauseSpotify();
-    if (!resuming || backgroundElapsedSeconds === null) backgroundElapsedSeconds = 0;
-    updateProgress(backgroundElapsedSeconds, 0);
+    const duration = block.duration || 20;
+    if (!resuming || blockRemainingSeconds === null) {
+      blockRemainingSeconds = duration;
+      blockDurationSeconds = duration;
+    }
+    updateProgress(blockDurationSeconds - blockRemainingSeconds, blockDurationSeconds);
     const tick = () => {
-      backgroundElapsedSeconds++;
-      updateProgress(backgroundElapsedSeconds, 0);
-      activePlaybackTimer = setTimeout(tick, 1000);
+      blockRemainingSeconds--;
+      updateProgress(blockDurationSeconds - blockRemainingSeconds, blockDurationSeconds);
+      if (blockRemainingSeconds <= 0) {
+        blockRemainingSeconds = null;
+        blockDurationSeconds = null;
+        setRepeatMode("off");
+        currentBlockIndex++;
+        runCurrentBlock();
+      } else {
+        activePlaybackTimer = setTimeout(tick, 1000);
+      }
     };
     activePlaybackTimer = setTimeout(tick, 1000);
 
@@ -1152,13 +1185,17 @@ async function runCurrentBlock() {
       if (resuming) {
         await resumeSpotify();
       } else {
+        const isTrack = bgUri.startsWith("spotify:track:");
+        // Loop the music for as long as this block's duration needs, even if
+        // that's longer than the track/playlist itself.
+        await setRepeatMode(isTrack ? "track" : "context");
         await setSpotifyVolume(0.25);
-        await playContextUri(bgUri, bgUri.startsWith("spotify:track:"));
+        await playContextUri(bgUri, isTrack);
       }
     } else {
       updateLiveUI(label, "Your turn to talk!", "(no background music set) Press green when done");
     }
-    // Waits for "I'm finished talking" button.
+    // Auto-advances when the timer runs out, or press "I'm finished talking" to skip early.
   }
   else {
     // quiet
@@ -1244,7 +1281,6 @@ document.getElementById("new-show-link").addEventListener("click", () => {
   showInProgress = false;
   blockRemainingSeconds = null;
   blockDurationSeconds = null;
-  backgroundElapsedSeconds = null;
   activeAudioEl = null;
   renderBlocks();
   saveShow();
@@ -1253,7 +1289,10 @@ document.getElementById("new-show-link").addEventListener("click", () => {
 
 finishedTalkingBtn.addEventListener("click", async () => {
   clearActivePlayback();
+  blockRemainingSeconds = null;
+  blockDurationSeconds = null;
   await setSpotifyVolume(0.8);
+  await setRepeatMode("off");
   currentBlockIndex++;
   runCurrentBlock();
 });
