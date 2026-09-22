@@ -59,11 +59,7 @@ async function deleteRecording(blockId) {
 }
 
 // ====================== STATE ======================
-function loadSavedShow() {
-  try {
-    const raw = localStorage.getItem("radio_show_blocks");
-    if (raw) return JSON.parse(raw);
-  } catch (e) { /* ignore */ }
+function getDefaultBlocks() {
   return [
     { id: "b1", type: "jingle", label: "Welcome Jingle", mode: "quiet", duration: 3 },
     { id: "b2", type: "songs", count: 4 },
@@ -74,6 +70,14 @@ function loadSavedShow() {
     { id: "b7", type: "songs", count: 3 },
     { id: "b8", type: "jingle", label: "Closing Jingle", mode: "quiet", duration: 3 }
   ];
+}
+
+function loadSavedShow() {
+  try {
+    const raw = localStorage.getItem("radio_show_blocks");
+    if (raw) return JSON.parse(raw);
+  } catch (e) { /* ignore */ }
+  return getDefaultBlocks();
 }
 
 function saveShow() {
@@ -100,6 +104,15 @@ let activeAudioEl = null;
 let trackPollInterval = null;
 let currentVolumePercent = 80;
 let showPlaylistOffset = 0;
+let showInProgress = false; // true once a show has started, so Back/Stop can resume it later
+let isResuming = false;     // set for one runCurrentBlock() call when continuing a paused block
+let blockRemainingSeconds = null; // quiet-mode countdown, survives pausing so it can resume
+let blockDurationSeconds = null;
+let backgroundElapsedSeconds = null; // open-ended background-mode elapsed time
+let trackDurationMs = 0;    // for the songs progress bar
+let trackProgressMsAtPoll = 0;
+let trackProgressPolledAt = 0;
+let progressTickInterval = null;
 
 // ====================== SIMPLE TONE JINGLE (fallback, no recording) ======================
 let audioCtx = null;
@@ -385,6 +398,20 @@ function exitToBuilderInternal() {
   liveScreen.classList.add("hidden");
   endScreen.classList.add("hidden");
   builderScreen.classList.remove("hidden");
+  updateStartButtonLabel();
+}
+
+function updateStartButtonLabel() {
+  const btn = document.getElementById("start-show-btn");
+  const newShowLink = document.getElementById("new-show-link");
+  if (!btn) return;
+  if (showInProgress) {
+    btn.textContent = "▶ Resume Show";
+    if (newShowLink) newShowLink.classList.remove("hidden");
+  } else {
+    btn.textContent = "▶ Start Show";
+    if (newShowLink) newShowLink.classList.add("hidden");
+  }
 }
 
 function exitToBuilder() {
@@ -909,6 +936,11 @@ async function pollCurrentTrack() {
     });
     if (res.status === 204 || !res.ok) return;
     const data = await res.json();
+    if (data.item) {
+      trackDurationMs = data.item.duration_ms || 0;
+      trackProgressMsAtPoll = data.progress_ms || 0;
+      trackProgressPolledAt = Date.now();
+    }
     const uri = data.item?.uri;
     if (uri && uri !== lastTrackUri) {
       const isFirst = lastTrackUri === null;
@@ -919,6 +951,21 @@ async function pollCurrentTrack() {
       if (!isFirst) onTrackEnded();
     }
   } catch (e) {}
+}
+
+// Between polls, estimate the song's live position so the progress bar and
+// elapsed/remaining time move smoothly instead of jumping every 900ms.
+function startProgressTicker() {
+  stopProgressTicker();
+  progressTickInterval = setInterval(() => {
+    if (!trackDurationMs) return;
+    const estMs = Math.min(trackDurationMs, trackProgressMsAtPoll + (Date.now() - trackProgressPolledAt));
+    updateProgress(estMs / 1000, trackDurationMs / 1000);
+  }, 250);
+}
+
+function stopProgressTicker() {
+  if (progressTickInterval) { clearInterval(progressTickInterval); progressTickInterval = null; }
 }
 
 function startTrackPolling() {
@@ -934,16 +981,42 @@ function stopTrackPolling() {
 }
 
 // ====================== SHOW ENGINE ======================
-function updateLiveUI(label, main, sub, progress = 0) {
+function updateLiveUI(label, main, sub) {
   statusLabel.textContent = label;
   statusMain.textContent = main;
   statusSub.textContent = sub;
-  progressFill.style.width = `${progress}%`;
+}
+
+function formatClock(totalSeconds) {
+  const s = Math.max(0, Math.round(totalSeconds || 0));
+  const m = Math.floor(s / 60);
+  const ss = (s % 60).toString().padStart(2, "0");
+  return `${m}:${ss}`;
+}
+
+const timeElapsedEl = document.getElementById("time-elapsed");
+const timeRemainingEl = document.getElementById("time-remaining");
+
+function updateProgress(elapsedSec, durationSec) {
+  if (durationSec && durationSec > 0 && isFinite(durationSec)) {
+    const pct = Math.min(100, Math.max(0, (elapsedSec / durationSec) * 100));
+    progressFill.style.width = pct + "%";
+    if (timeElapsedEl) timeElapsedEl.textContent = formatClock(elapsedSec);
+    if (timeRemainingEl) timeRemainingEl.textContent = "-" + formatClock(Math.max(0, durationSec - elapsedSec));
+  } else {
+    // Open-ended (e.g. background music with no fixed length) — just count up.
+    progressFill.style.width = "100%";
+    if (timeElapsedEl) timeElapsedEl.textContent = formatClock(elapsedSec);
+    if (timeRemainingEl) timeRemainingEl.textContent = "";
+  }
 }
 
 function clearActivePlayback() {
+  // Pauses without destroying anything, so a paused block can pick up again
+  // from exactly where it left off (see isResuming in runCurrentBlock).
   if (activePlaybackTimer) { clearTimeout(activePlaybackTimer); activePlaybackTimer = null; }
-  if (activeAudioEl) { activeAudioEl.pause(); activeAudioEl = null; }
+  if (activeAudioEl) activeAudioEl.pause();
+  stopProgressTicker();
 }
 
 function getNextBlockPreview() {
@@ -981,6 +1054,8 @@ function renderTimetable() {
 }
 
 async function runCurrentBlock() {
+  const resuming = isResuming;
+  isResuming = false;
   clearActivePlayback();
 
   if (currentBlockIndex >= blocks.length) {
@@ -992,6 +1067,11 @@ async function runCurrentBlock() {
       runCurrentBlock();
       return;
     } else {
+      showInProgress = false;
+      blockRemainingSeconds = null;
+      blockDurationSeconds = null;
+      backgroundElapsedSeconds = null;
+      activeAudioEl = null;
       liveScreen.classList.add("hidden");
       endScreen.classList.remove("hidden");
       return;
@@ -1004,12 +1084,19 @@ async function runCurrentBlock() {
   setLiveButtonsForBlock(block);
 
   if (block.type === "songs") {
-    songsPlayedInBlock = 0;
-    lastTrackUri = null;
-    updateLiveUI("Now Playing", `Song 1 of ${block.count}`, "Starting playlist...", 5);
+    if (!resuming) {
+      songsPlayedInBlock = 0;
+      lastTrackUri = null;
+    }
+    updateLiveUI("Now Playing", `Song ${songsPlayedInBlock + 1} of ${block.count}`, resuming ? "Resuming..." : "Starting playlist...");
     isPlaying = true;
-    await playNextSpotifyTrack();
+    if (resuming) {
+      await resumeSpotify();
+    } else {
+      await playNextSpotifyTrack();
+    }
     startTrackPolling();
+    startProgressTicker();
     return;
   }
 
@@ -1019,46 +1106,77 @@ async function runCurrentBlock() {
 
   if (block.mode === "record") {
     await pauseSpotify();
-    updateLiveUI(label, "Playing recording...", "Listen up!", 0);
+    updateLiveUI(label, "Playing recording...", "Listen up!");
+    if (resuming && activeAudioEl) {
+      updateProgress(activeAudioEl.currentTime, activeAudioEl.duration);
+      activeAudioEl.play().catch(() => {});
+      return;
+    }
+    activeAudioEl = null;
     const blob = await loadRecording(block.id);
     if (!blob) {
       // No recording saved, fall back to a short quiet pause
-      updateLiveUI(label, "🤫 ...", "(no recording found)", 0);
+      updateLiveUI(label, "🤫 ...", "(no recording found)");
+      updateProgress(0, 0);
       activePlaybackTimer = setTimeout(() => { currentBlockIndex++; runCurrentBlock(); }, 3000);
       return;
     }
     const audio = new Audio(URL.createObjectURL(blob));
     activeAudioEl = audio;
-    audio.addEventListener("ended", () => { currentBlockIndex++; runCurrentBlock(); });
+    audio.addEventListener("loadedmetadata", () => updateProgress(0, audio.duration));
+    audio.addEventListener("timeupdate", () => updateProgress(audio.currentTime, audio.duration));
+    audio.addEventListener("ended", () => {
+      activeAudioEl = null;
+      currentBlockIndex++;
+      runCurrentBlock();
+    });
     audio.play().catch(() => {
       activePlaybackTimer = setTimeout(() => { currentBlockIndex++; runCurrentBlock(); }, 3000);
     });
   }
   else if (block.mode === "background") {
     await pauseSpotify();
+    if (!resuming || backgroundElapsedSeconds === null) backgroundElapsedSeconds = 0;
+    updateProgress(backgroundElapsedSeconds, 0);
+    const tick = () => {
+      backgroundElapsedSeconds++;
+      updateProgress(backgroundElapsedSeconds, 0);
+      activePlaybackTimer = setTimeout(tick, 1000);
+    };
+    activePlaybackTimer = setTimeout(tick, 1000);
+
     const bgRaw = bgMusicInput.value.trim();
     const bgUri = extractPlaylistOrTrackUri(bgRaw);
     if (bgUri) {
-      updateLiveUI(label, "Background music playing", "Talk over it! Press green when done", 30);
-      await setSpotifyVolume(0.25);
-      await playContextUri(bgUri, bgUri.startsWith("spotify:track:"));
+      updateLiveUI(label, "Background music playing", "Talk over it! Press green when done");
+      if (resuming) {
+        await resumeSpotify();
+      } else {
+        await setSpotifyVolume(0.25);
+        await playContextUri(bgUri, bgUri.startsWith("spotify:track:"));
+      }
     } else {
-      updateLiveUI(label, "Your turn to talk!", "(no background music set) Press green when done", 0);
+      updateLiveUI(label, "Your turn to talk!", "(no background music set) Press green when done");
     }
     // Waits for "I'm finished talking" button.
   }
   else {
     // quiet
     await pauseSpotify();
-    if (block.type === "jingle") playHappyChime();
     const duration = block.duration || 10;
-    let remaining = duration;
-    updateLiveUI(label, block.type === "jingle" ? "🎶 Jingle time!" : "🤫 Shhh...", `${remaining}s left — or press green when done`, 0);
+    if (!resuming || blockRemainingSeconds === null) {
+      if (block.type === "jingle") playHappyChime();
+      blockRemainingSeconds = duration;
+      blockDurationSeconds = duration;
+    }
+    updateLiveUI(label, block.type === "jingle" ? "🎶 Jingle time!" : "🤫 Shhh...", "Press green when done");
+    updateProgress(blockDurationSeconds - blockRemainingSeconds, blockDurationSeconds);
     const tick = () => {
-      remaining--;
-      const pct = ((duration - remaining) / duration) * 100;
-      updateLiveUI(label, block.type === "jingle" ? "🎶 Jingle time!" : "🤫 Shhh...", `${Math.max(remaining, 0)}s left — or press green when done`, pct);
-      if (remaining <= 0) {
+      blockRemainingSeconds--;
+      updateProgress(blockDurationSeconds - blockRemainingSeconds, blockDurationSeconds);
+      if (blockRemainingSeconds <= 0) {
+        blockRemainingSeconds = null;
+        blockDurationSeconds = null;
         currentBlockIndex++;
         runCurrentBlock();
       } else {
@@ -1080,12 +1198,7 @@ function onTrackEnded() {
       currentBlockIndex++;
       runCurrentBlock();
     } else {
-      updateLiveUI(
-        "Now Playing",
-        `Song ${songsPlayedInBlock + 1} of ${block.count}`,
-        "Music from Spotify",
-        (songsPlayedInBlock / block.count) * 100
-      );
+      updateLiveUI("Now Playing", `Song ${songsPlayedInBlock + 1} of ${block.count}`, "Music from Spotify");
     }
   }
 }
@@ -1106,15 +1219,36 @@ document.getElementById("start-show-btn").addEventListener("click", async () => 
     return;
   }
   saveShow();
-  currentBlockIndex = 0;
-  songsPlayedInBlock = 0;
-  showPlaylistOffset = 0;
+  isResuming = showInProgress; // false = fresh start, true = continue where we left off
+  if (!isResuming) {
+    currentBlockIndex = 0;
+    songsPlayedInBlock = 0;
+    showPlaylistOffset = 0;
+  }
+  showInProgress = true;
   isPaused = false;
   pushShowHistory();
+  updateStartButtonLabel();
   builderScreen.classList.add("hidden");
   liveScreen.classList.remove("hidden");
   endScreen.classList.add("hidden");
   runCurrentBlock();
+});
+
+document.getElementById("new-show-link").addEventListener("click", () => {
+  if (!confirm("Start a brand new show? This resets your blocks back to the default show.")) return;
+  blocks = getDefaultBlocks();
+  currentBlockIndex = 0;
+  songsPlayedInBlock = 0;
+  showPlaylistOffset = 0;
+  showInProgress = false;
+  blockRemainingSeconds = null;
+  blockDurationSeconds = null;
+  backgroundElapsedSeconds = null;
+  activeAudioEl = null;
+  renderBlocks();
+  saveShow();
+  updateStartButtonLabel();
 });
 
 finishedTalkingBtn.addEventListener("click", async () => {
@@ -1149,6 +1283,8 @@ document.getElementById("stop-show-btn").addEventListener("click", exitToBuilder
 
 document.getElementById("play-again-btn").addEventListener("click", () => {
   pushShowHistory(); // no-op if already pushed; keeps a single "back → home" level
+  showInProgress = true;
+  isResuming = false;
   endScreen.classList.add("hidden");
   liveScreen.classList.remove("hidden");
   currentBlockIndex = 0;

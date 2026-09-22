@@ -403,6 +403,33 @@ header h1 {
   transition: width 0.3s;
 }
 
+.time-row {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 0.85rem;
+  color: #7f8c8d;
+  font-weight: 600;
+}
+
+.link-btn {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  color: #4A90E2;
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-align: center;
+  padding: 4px;
+  margin-bottom: 16px;
+  cursor: pointer;
+}
+
+.link-btn:active {
+  opacity: 0.6;
+}
+
 .next-up {
   text-align: center;
   font-size: 1rem;
