@@ -752,7 +752,10 @@ finishedTalkingBtn.addEventListener("click", async () => {
 
 skipSongBtn.addEventListener("click", async () => {
   if (spotifyPlayer) {
-    try { await spotifyPlayer.nextTrack(); } catch (e) {}
+    try {
+      await spotifyPlayer.nextTrack();
+      return; // player_state_changed listener advances the counter
+    } catch (e) {}
   }
   onTrackEnded();
 });
