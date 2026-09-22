@@ -1,6 +1,6 @@
 {
-  "name": "My Radio Station",
-  "short_name": "Radio Station",
+  "name": "Krom FM",
+  "short_name": "Krom FM",
   "description": "Kid-friendly pretend radio station with Spotify",
   "start_url": ".",
   "scope": ".",

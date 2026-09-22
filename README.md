@@ -1,4 +1,4 @@
-# My Radio Station
+# Krom FM
 
 A fun, kid-friendly pretend radio station app for an 8-year-old.
 
@@ -16,7 +16,7 @@ A fun, kid-friendly pretend radio station app for an 8-year-old.
 
 ## How the child uses it
 
-- **Build Your Show**: paste a Spotify playlist link, add blocks (Songs, Jingle, Talk Time/News, Talk-over Music, Commercial Break), drag to reorder.
+- **The DJ Raf Show**: paste a Spotify playlist link, add blocks (Songs, Jingle, Talk Time/News, Talk-over Music, Commercial Break), drag to reorder.
 - For any non-song block, choose how it works:
   - 🤫 **Quiet** — silence for a set number of seconds (news, breaks).
   - 🎙️ **Record my own voice** — tap record, say the bit, save. Each block keeps its own separate recording, even if it's the same block type used again later in the show.
