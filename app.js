@@ -258,11 +258,50 @@ function closeAllModals() {
   }
 }
 
+// Same pattern for the Live/End show screens: starting a show pushes one
+// history entry, so the phone's back button (or gesture) returns straight
+// to the builder ("home") from anywhere in the show, just like the Stop
+// Show button does.
+let showHistoryPushed = false;
+
+function pushShowHistory() {
+  if (!showHistoryPushed) {
+    showHistoryPushed = true;
+    history.pushState({ radioShow: true }, "");
+  }
+}
+
+function exitToBuilderInternal() {
+  clearActivePlayback();
+  stopTrackPolling();
+  pauseSpotify();
+  isPlaying = false;
+  isPaused = false;
+  const pauseBtn = document.getElementById("pause-btn");
+  if (pauseBtn) pauseBtn.textContent = "Pause everything";
+  liveScreen.classList.add("hidden");
+  endScreen.classList.add("hidden");
+  builderScreen.classList.remove("hidden");
+}
+
+function exitToBuilder() {
+  exitToBuilderInternal();
+  if (showHistoryPushed) {
+    showHistoryPushed = false;
+    history.back();
+  }
+}
+
 window.addEventListener("popstate", () => {
   if (modalHistoryPushed) {
     modalHistoryPushed = false;
     hideAllModalsInternal();
     modeModalTarget = null;
+    return;
+  }
+  if (showHistoryPushed) {
+    showHistoryPushed = false;
+    exitToBuilderInternal();
   }
 });
 
@@ -941,6 +980,7 @@ document.getElementById("start-show-btn").addEventListener("click", async () => 
   songsPlayedInBlock = 0;
   showPlaylistOffset = 0;
   isPaused = false;
+  pushShowHistory();
   builderScreen.classList.add("hidden");
   liveScreen.classList.remove("hidden");
   endScreen.classList.add("hidden");
@@ -973,16 +1013,10 @@ document.getElementById("pause-btn").addEventListener("click", async () => {
   }
 });
 
-document.getElementById("stop-show-btn").addEventListener("click", async () => {
-  clearActivePlayback();
-  stopTrackPolling();
-  await pauseSpotify();
-  isPlaying = false;
-  liveScreen.classList.add("hidden");
-  builderScreen.classList.remove("hidden");
-});
+document.getElementById("stop-show-btn").addEventListener("click", exitToBuilder);
 
 document.getElementById("play-again-btn").addEventListener("click", () => {
+  pushShowHistory(); // no-op if already pushed; keeps a single "back → home" level
   endScreen.classList.add("hidden");
   liveScreen.classList.remove("hidden");
   currentBlockIndex = 0;
@@ -991,10 +1025,7 @@ document.getElementById("play-again-btn").addEventListener("click", () => {
   runCurrentBlock();
 });
 
-document.getElementById("back-to-builder-btn").addEventListener("click", () => {
-  endScreen.classList.add("hidden");
-  builderScreen.classList.remove("hidden");
-});
+document.getElementById("back-to-builder-btn").addEventListener("click", exitToBuilder);
 
 document.getElementById("login-btn").addEventListener("click", loginWithSpotify);
 playlistInput.addEventListener("change", saveShow);
