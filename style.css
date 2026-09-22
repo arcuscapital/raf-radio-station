@@ -133,6 +133,15 @@ header h1 {
   box-shadow: 0 4px 12px rgba(0,0,0,0.1);
   cursor: grab;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  /* Must be set here (not toggled by JS once a long-press fires) — iOS Safari
+     only honors touch-action if it's in place before the touch begins, which
+     is why long-press-then-drag reordering didn't work on a real phone even
+     though the long-press itself did. JS scrolls the page manually instead
+     (see attachCardDrag in app.js) since native scrolling is now off here. */
+  touch-action: none;
   transition: transform 0.15s;
 }
 

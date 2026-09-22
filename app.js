@@ -178,6 +178,8 @@ let dragCtx = null;
 function attachCardDrag(card) {
   let longPressTimer = null;
   let startX = 0, startY = 0, pointerId = null;
+  let scrollPassthroughActive = false;
+  let lastScrollClientY = 0;
 
   function cancelPreDrag() {
     clearTimeout(longPressTimer);
@@ -185,12 +187,35 @@ function attachCardDrag(card) {
     card.removeEventListener("pointerup", onPreUp);
     card.removeEventListener("pointercancel", onPreUp);
   }
+
+  // The card has touch-action: none (required for the long-press-then-drag
+  // gesture to register reliably on iOS/Android), which also switches off the
+  // browser's own touch scrolling for it. So if the finger moves before the
+  // long-press fires — meaning they're scrolling, not trying to reorder — we
+  // have to scroll the page ourselves for the rest of that touch.
   function onPreMove(e) {
     if (Math.abs(e.clientY - startY) > DRAG_CANCEL_PX || Math.abs(e.clientX - startX) > DRAG_CANCEL_PX) {
       cancelPreDrag();
+      scrollPassthroughActive = true;
+      lastScrollClientY = e.clientY;
+      card.addEventListener("pointermove", onScrollPassthroughMove);
+      card.addEventListener("pointerup", onScrollPassthroughEnd);
+      card.addEventListener("pointercancel", onScrollPassthroughEnd);
+      window.scrollBy(0, lastScrollClientY - e.clientY);
     }
   }
   function onPreUp() { cancelPreDrag(); }
+
+  function onScrollPassthroughMove(e) {
+    window.scrollBy(0, lastScrollClientY - e.clientY);
+    lastScrollClientY = e.clientY;
+  }
+  function onScrollPassthroughEnd() {
+    scrollPassthroughActive = false;
+    card.removeEventListener("pointermove", onScrollPassthroughMove);
+    card.removeEventListener("pointerup", onScrollPassthroughEnd);
+    card.removeEventListener("pointercancel", onScrollPassthroughEnd);
+  }
 
   card.addEventListener("pointerdown", (e) => {
     if (e.target.closest("button")) return;
@@ -224,7 +249,6 @@ function beginDrag(card, pointerId, clientY) {
 
   try { card.setPointerCapture(pointerId); } catch (e) {}
   card.classList.add("dragging");
-  card.style.touchAction = "none";
   document.addEventListener("pointermove", onDragMove);
   document.addEventListener("pointerup", onDragEnd);
   document.addEventListener("pointercancel", onDragEnd);
