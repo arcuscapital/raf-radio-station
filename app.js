@@ -901,27 +901,32 @@ async function setSpotifyVolume(percent0to1) {
 // Spotify Connect (unlike the Web Playback SDK) doesn't push track-change
 // events to us, so while a "songs" block is playing we poll for the
 // currently playing track to detect when it changes.
+async function pollCurrentTrack() {
+  if (!isPlaying || !accessToken) return;
+  try {
+    const res = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {
+      headers: { "Authorization": `Bearer ${accessToken}` }
+    });
+    if (res.status === 204 || !res.ok) return;
+    const data = await res.json();
+    const uri = data.item?.uri;
+    if (uri && uri !== lastTrackUri) {
+      const isFirst = lastTrackUri === null;
+      lastTrackUri = uri;
+      if (data.item && statusSub) {
+        statusSub.textContent = data.item.name + " – " + (data.item.artists?.[0]?.name || "");
+      }
+      if (!isFirst) onTrackEnded();
+    }
+  } catch (e) {}
+}
+
 function startTrackPolling() {
   stopTrackPolling();
-  trackPollInterval = setInterval(async () => {
-    if (!isPlaying || !accessToken) return;
-    try {
-      const res = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {
-        headers: { "Authorization": `Bearer ${accessToken}` }
-      });
-      if (res.status === 204 || !res.ok) return;
-      const data = await res.json();
-      const uri = data.item?.uri;
-      if (uri && uri !== lastTrackUri) {
-        const isFirst = lastTrackUri === null;
-        lastTrackUri = uri;
-        if (data.item && statusSub) {
-          statusSub.textContent = data.item.name + " – " + (data.item.artists?.[0]?.name || "");
-        }
-        if (!isFirst) onTrackEnded();
-      }
-    } catch (e) {}
-  }, 2500);
+  // Fairly short interval: Spotify Connect gives us no push notification when a
+  // track changes, so this poll is the only way we find out — and the parent
+  // noticed the "Song X of Y" display visibly lagging behind the real audio.
+  trackPollInterval = setInterval(pollCurrentTrack, 900);
 }
 
 function stopTrackPolling() {
@@ -972,7 +977,7 @@ function renderTimetable() {
     timetableEl.appendChild(chip);
   });
   const currentChip = timetableEl.children[currentBlockIndex];
-  if (currentChip) currentChip.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  if (currentChip) currentChip.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
 }
 
 async function runCurrentBlock() {
@@ -1121,7 +1126,9 @@ finishedTalkingBtn.addEventListener("click", async () => {
 
 skipSongBtn.addEventListener("click", async () => {
   await nextTrackSpotify();
-  // the track-change poll advances the counter once it sees the new track
+  // Don't wait for the regular poll interval — check right away (with a short
+  // delay for Spotify to register the skip) so the display updates promptly.
+  setTimeout(pollCurrentTrack, 350);
 });
 
 document.getElementById("pause-btn").addEventListener("click", async () => {
