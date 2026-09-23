@@ -423,13 +423,16 @@ function exitToBuilderInternal() {
 function updateStartButtonLabel() {
   const btn = document.getElementById("start-show-btn");
   const newShowLink = document.getElementById("new-show-link");
+  const restartShowLink = document.getElementById("restart-show-link");
   if (!btn) return;
   if (showInProgress) {
     btn.textContent = "▶ Resume Show";
     if (newShowLink) newShowLink.classList.remove("hidden");
+    if (restartShowLink) restartShowLink.classList.remove("hidden");
   } else {
     btn.textContent = "▶ Start Show";
     if (newShowLink) newShowLink.classList.add("hidden");
+    if (restartShowLink) restartShowLink.classList.add("hidden");
   }
 }
 
@@ -1385,6 +1388,38 @@ document.getElementById("start-show-btn").addEventListener("click", async () => 
     currentBlockIndex = 0;
     songsPlayedInBlock = 0;
   }
+  showInProgress = true;
+  isPaused = false;
+  pushShowHistory();
+  updateStartButtonLabel();
+  builderScreen.classList.add("hidden");
+  liveScreen.classList.remove("hidden");
+  endScreen.classList.add("hidden");
+  runCurrentBlock();
+});
+
+document.getElementById("restart-show-link").addEventListener("click", async () => {
+  if (!accessToken) {
+    alert("Please connect Spotify first!");
+    return;
+  }
+  const hasDevice = await ensureDevice();
+  if (!hasDevice) {
+    alert("Open the Spotify app on this phone and press play on any song, then try again.");
+    return;
+  }
+  if (blocks.length === 0) {
+    alert("Add at least one block!");
+    return;
+  }
+  saveShow();
+  // Same blocks (and any recordings) as the paused show, just from the top.
+  currentBlockIndex = 0;
+  songsPlayedInBlock = 0;
+  blockRemainingSeconds = null;
+  blockDurationSeconds = null;
+  if (activeAudioEl) { activeAudioEl.pause(); activeAudioEl = null; }
+  isResuming = false;
   showInProgress = true;
   isPaused = false;
   pushShowHistory();
