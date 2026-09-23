@@ -16,7 +16,7 @@ A fun, kid-friendly pretend radio station app for an 8-year-old.
 
 ## How the child uses it
 
-- **The DJ Raf Show**: paste a Spotify playlist link, add blocks (Songs, Jingle, Talk Time/News, Talk-over Music, Commercial Break), drag to reorder.
+- **The DJ Raf Show**: no playlist link needed — open Spotify on the phone, pick a playlist (or any songs), then open the app. Add blocks (Songs, Jingle, Weather/Traffic/News, DJ Talk, Commercial Break), press-and-hold a block to drag it up or down to reorder.
 - For any non-song block, choose how it works:
   - 🤫 **Quiet** — silence for a set number of seconds (news, breaks).
   - 🎙️ **Record my own voice** — tap record, say the bit, save. Each block keeps its own separate recording, even if it's the same block type used again later in the show.
@@ -26,7 +26,7 @@ A fun, kid-friendly pretend radio station app for an 8-year-old.
 
 ## Notes / limits
 
-- Requires a real internet connection and Spotify Premium (Web Playback SDK playback control needs Premium).
+- Requires a real internet connection and Spotify Premium (playback control needs Premium). The actual Spotify app must be open on the phone with something selected — the radio app remote-controls it via Spotify Connect, the same tech behind Spotify's own "cast to a device."
 - Microphone recording and Spotify login both require HTTPS — that's why this is hosted (for free) on GitHub Pages instead of being a plain local file. The parent still never has to run anything; it's just a link that acts like an app.
 - Jingles use a short built-in chime unless you record your own for that block.
 

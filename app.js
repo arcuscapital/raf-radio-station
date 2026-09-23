@@ -83,7 +83,6 @@ function loadSavedShow() {
 function saveShow() {
   localStorage.setItem("radio_show_blocks", JSON.stringify(blocks));
   localStorage.setItem("radio_bg_music", bgMusicInput.value.trim());
-  localStorage.setItem("radio_playlist", playlistInput.value.trim());
 }
 
 let blocks = loadSavedShow();
@@ -97,13 +96,11 @@ let isPlaying = false;
 let deviceId = null;
 let accessToken = null;
 let isPaused = false;
-let playlistUri = "spotify:playlist:37i9dQZF1E4CPcTtDJiVpn";
 let lastTrackUri = null;
 let activePlaybackTimer = null;
 let activeAudioEl = null;
 let trackPollInterval = null;
 let currentVolumePercent = 80;
-let showPlaylistOffset = 0;
 let showInProgress = false; // true once a show has started, so Back/Stop can resume it later
 let isResuming = false;     // set for one runCurrentBlock() call when continuing a paused block
 let blockRemainingSeconds = null; // quiet-mode countdown, survives pausing so it can resume
@@ -154,12 +151,10 @@ const statusMain = document.getElementById("status-main");
 const statusSub = document.getElementById("status-sub");
 const nextUp = document.getElementById("next-up");
 const progressFill = document.getElementById("progress-fill");
-const playlistInput = document.getElementById("playlist-input");
 const bgMusicInput = document.getElementById("bg-music-input");
 const skipSongBtn = document.getElementById("skip-song-btn");
 const finishedTalkingBtn = document.getElementById("finished-talking-btn");
 
-playlistInput.value = localStorage.getItem("radio_playlist") || playlistInput.value;
 bgMusicInput.value = localStorage.getItem("radio_bg_music") || "";
 
 const MODE_LABELS = { quiet: "🤫 Quiet", record: "🎙️ Recorded", background: "🎶 Background" };
@@ -896,14 +891,34 @@ async function playContextUri(contextUri, isTrack, offsetPosition = 0) {
   }
 }
 
+// Rather than starting a pasted playlist link from track 1 every time, hand off
+// to whatever the parent already has open and selected in the real Spotify app:
+// if it hasn't really started yet, just play it; if it's already under way,
+// move on to the next track so the same song isn't replayed from the top.
 async function startPlaylistPlayback() {
-  const raw = playlistInput ? playlistInput.value.trim() : "";
-  const uri = extractPlaylistOrTrackUri(raw) || playlistUri;
-  const isNewPlaylist = uri !== playlistUri;
-  playlistUri = uri;
-  if (isNewPlaylist) showPlaylistOffset = 0;
-  const ok = await playContextUri(uri, uri.startsWith("spotify:track:"), showPlaylistOffset);
-  if (!ok) setTimeout(onTrackEnded, 10000);
+  if (!deviceId || !accessToken) return;
+  try {
+    const res = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {
+      headers: { "Authorization": `Bearer ${accessToken}` }
+    });
+    if (res.status === 204 || !res.ok) {
+      // Nothing selected/loaded in Spotify yet — ask the parent to pick something and retry shortly.
+      updateLiveUI("Now Playing", "Waiting for Spotify…", "Open Spotify, pick a playlist, then press play");
+      activePlaybackTimer = setTimeout(() => runCurrentBlock(), 2000);
+      return;
+    }
+    const data = await res.json();
+    const progressMs = data.progress_ms || 0;
+    const HAS_STARTED_THRESHOLD_MS = 2000;
+    if (progressMs > HAS_STARTED_THRESHOLD_MS) {
+      await nextTrackSpotify();
+    } else {
+      await resumeSpotify();
+    }
+  } catch (e) {
+    console.error("Playlist handoff error", e);
+    setTimeout(onTrackEnded, 10000);
+  }
 }
 
 async function playNextSpotifyTrack() {
@@ -1190,8 +1205,6 @@ async function runCurrentBlock() {
     if (loopEnabled) {
       currentBlockIndex = 0;
       songsPlayedInBlock = 0;
-      // showPlaylistOffset intentionally NOT reset here: looping the show
-      // should keep playing forward through the playlist, not restart it.
       runCurrentBlock();
       return;
     } else {
@@ -1341,7 +1354,6 @@ function onTrackEnded() {
   const block = blocks[currentBlockIndex];
   if (block && block.type === "songs") {
     songsPlayedInBlock++;
-    showPlaylistOffset++;
     if (songsPlayedInBlock >= block.count) {
       isPlaying = false;
       currentBlockIndex++;
@@ -1372,7 +1384,6 @@ document.getElementById("start-show-btn").addEventListener("click", async () => 
   if (!isResuming) {
     currentBlockIndex = 0;
     songsPlayedInBlock = 0;
-    showPlaylistOffset = 0;
   }
   showInProgress = true;
   isPaused = false;
@@ -1389,7 +1400,6 @@ document.getElementById("new-show-link").addEventListener("click", () => {
   blocks = getDefaultBlocks();
   currentBlockIndex = 0;
   songsPlayedInBlock = 0;
-  showPlaylistOffset = 0;
   showInProgress = false;
   blockRemainingSeconds = null;
   blockDurationSeconds = null;
@@ -1441,14 +1451,12 @@ document.getElementById("play-again-btn").addEventListener("click", () => {
   liveScreen.classList.remove("hidden");
   currentBlockIndex = 0;
   songsPlayedInBlock = 0;
-  showPlaylistOffset = 0;
   runCurrentBlock();
 });
 
 document.getElementById("back-to-builder-btn").addEventListener("click", exitToBuilder);
 
 document.getElementById("login-btn").addEventListener("click", loginWithSpotify);
-playlistInput.addEventListener("change", saveShow);
 bgMusicInput.addEventListener("change", saveShow);
 
 // ====================== INIT ======================
