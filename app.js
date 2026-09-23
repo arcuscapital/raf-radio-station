@@ -995,6 +995,49 @@ async function seekSpotify(positionMs) {
   } catch (e) {}
 }
 
+// ====================== BACKGROUND-MUSIC HANDOFF ======================
+// Background-music blocks have to temporarily switch Spotify over to a
+// different track/playlist, which otherwise leaves the app with no idea where
+// the real "songs" playlist was when it comes back. So right before diverting,
+// remember exactly where the playlist was; right after the background block
+// ends, jump back into that playlist, move it on to the next track, and pause
+// it there — cued up and ready — until an actual Songs block starts.
+let savedPlaylistContext = null; // { contextUri, trackUri } snapshot taken just before diverting
+
+async function snapshotPlaylistContext() {
+  if (!accessToken) return;
+  try {
+    const res = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {
+      headers: { "Authorization": `Bearer ${accessToken}` }
+    });
+    if (!res.ok || res.status === 204) return;
+    const data = await res.json();
+    if (data.context?.uri && data.item?.uri) {
+      savedPlaylistContext = { contextUri: data.context.uri, trackUri: data.item.uri };
+    }
+  } catch (e) {}
+}
+
+async function restorePlaylistAndAdvance() {
+  if (!savedPlaylistContext || !deviceId || !accessToken) { savedPlaylistContext = null; return; }
+  const { contextUri, trackUri } = savedPlaylistContext;
+  savedPlaylistContext = null;
+  try {
+    await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
+      method: "PUT",
+      headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ context_uri: contextUri, offset: { uri: trackUri } })
+    });
+    await new Promise(r => setTimeout(r, 300));
+    // Move past the track that was interrupted, so the show doesn't replay it.
+    await nextTrackSpotify();
+    await new Promise(r => setTimeout(r, 300));
+    await pauseSpotify();
+  } catch (e) {
+    console.error("Restore playlist error", e);
+  }
+}
+
 // ====================== TRACK-CHANGE POLLING ======================
 // Spotify Connect (unlike the Web Playback SDK) doesn't push track-change
 // events to us, so while a "songs" block is playing we poll for the
@@ -1289,14 +1332,15 @@ async function runCurrentBlock() {
       blockDurationSeconds = duration;
     }
     updateProgress(blockDurationSeconds - blockRemainingSeconds, blockDurationSeconds);
-    const tick = () => {
+    const tick = async () => {
       if (isScrubbing) { activePlaybackTimer = setTimeout(tick, 200); return; }
       blockRemainingSeconds--;
       updateProgress(blockDurationSeconds - blockRemainingSeconds, blockDurationSeconds);
       if (blockRemainingSeconds <= 0) {
         blockRemainingSeconds = null;
         blockDurationSeconds = null;
-        setRepeatMode("off");
+        await setRepeatMode("off");
+        await restorePlaylistAndAdvance();
         currentBlockIndex++;
         runCurrentBlock();
       } else {
@@ -1312,6 +1356,8 @@ async function runCurrentBlock() {
       if (resuming) {
         await resumeSpotify();
       } else {
+        // Remember exactly where the real playlist is before hijacking playback.
+        await snapshotPlaylistContext();
         const isTrack = bgUri.startsWith("spotify:track:");
         // Loop the music for as long as this block's duration needs, even if
         // that's longer than the track/playlist itself.
@@ -1450,6 +1496,7 @@ finishedTalkingBtn.addEventListener("click", async () => {
   blockDurationSeconds = null;
   await setSpotifyVolume(0.8);
   await setRepeatMode("off");
+  await restorePlaylistAndAdvance();
   currentBlockIndex++;
   runCurrentBlock();
 });
