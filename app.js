@@ -108,7 +108,6 @@ let blockDurationSeconds = null;
 let trackDurationMs = 0;    // for the songs progress bar
 let trackProgressMsAtPoll = 0;
 let trackProgressPolledAt = 0;
-let endGuardTimer = null;
 let lastHandledTrackUri = null;
 let repeatTrackArmedForUri = null;
 let repeatTrackArmPromise = null;
@@ -630,6 +629,48 @@ function stopMicStream() {
   }
 }
 
+// ====================== BACKGROUND MUSIC WHILE RECORDING ======================
+// "Record my own voice – background music" plays the saved background track/
+// playlist out loud on the paired Spotify device for the whole time the DJ is
+// recording, ducked to 30% so it doesn't drown out their voice, then puts the
+// real playlist back exactly where — and, unlike the show's own background
+// blocks, exactly WHEN — it was, at whatever volume it was at before. The mic
+// only ever captures the DJ's voice (Spotify audio never passes through this
+// browser tab), so this is purely for the DJ's own experience while recording.
+let recordingBgMusicActive = false;
+let volumeBeforeRecording = null;
+
+async function startRecordingBgMusicIfNeeded() {
+  if (!pendingRecordBgMusic || !deviceId || !accessToken) return;
+  const bgUri = extractPlaylistOrTrackUri(bgMusicInput.value.trim());
+  if (!bgUri) return;
+  try {
+    const { devices } = await fetchDevices();
+    const activeDevice = devices.find(d => d.id === deviceId) || devices[0];
+    volumeBeforeRecording = activeDevice && typeof activeDevice.volume_percent === "number"
+      ? activeDevice.volume_percent
+      : currentVolumePercent;
+    await snapshotPlaylistContext();
+    const isTrack = bgUri.startsWith("spotify:track:");
+    await setRepeatMode(isTrack ? "track" : "context");
+    await setSpotifyVolume(0.3);
+    await playContextUri(bgUri, isTrack);
+    recordingBgMusicActive = true;
+  } catch (e) {
+    console.error("Couldn't start background music for recording", e);
+  }
+}
+
+async function stopRecordingBgMusicIfNeeded() {
+  if (!recordingBgMusicActive) return;
+  recordingBgMusicActive = false;
+  await setRepeatMode("off");
+  await restorePlaylistAndResume();
+  const restoreVolume = typeof volumeBeforeRecording === "number" ? volumeBeforeRecording : 80;
+  volumeBeforeRecording = null;
+  await setSpotifyVolume(restoreVolume / 100);
+}
+
 recorderMainBtn.addEventListener("click", async () => {
   if (mediaRecorder && mediaRecorder.state === "recording") {
     mediaRecorder.stop();
@@ -648,12 +689,14 @@ recorderMainBtn.addEventListener("click", async () => {
     alert("Couldn't access the microphone. Please allow microphone permission and try again.");
     return;
   }
+  await startRecordingBgMusicIfNeeded();
   recordedChunks = [];
   mediaRecorder = new MediaRecorder(micStream);
   mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunks.push(e.data); };
   mediaRecorder.onstop = () => {
     stopMicStream();
     clearInterval(recordTimerInterval);
+    stopRecordingBgMusicIfNeeded();
     const blob = new Blob(recordedChunks, { type: "audio/webm" });
     pendingRecordingBlob = blob;
     recorderPreview.src = URL.createObjectURL(blob);
@@ -1017,7 +1060,7 @@ async function seekSpotify(positionMs) {
 // remember exactly where the playlist was; right after the background block
 // ends, jump back into that playlist, move it on to the next track, and pause
 // it there — cued up and ready — until an actual Songs block starts.
-let savedPlaylistContext = null; // { contextUri, trackUri } snapshot taken just before diverting
+let savedPlaylistContext = null; // { contextUri, trackUri, progressMs } snapshot taken just before diverting
 
 async function snapshotPlaylistContext() {
   if (!accessToken) return;
@@ -1028,7 +1071,7 @@ async function snapshotPlaylistContext() {
     if (!res.ok || res.status === 204) return;
     const data = await res.json();
     if (data.context?.uri && data.item?.uri) {
-      savedPlaylistContext = { contextUri: data.context.uri, trackUri: data.item.uri };
+      savedPlaylistContext = { contextUri: data.context.uri, trackUri: data.item.uri, progressMs: data.progress_ms || 0 };
     }
   } catch (e) {}
 }
@@ -1056,6 +1099,34 @@ async function restorePlaylistAndAdvance() {
     await nextTrackSpotify();
     await new Promise(r => setTimeout(r, 300));
     await pauseSpotify();
+  } catch (e) {
+    console.error("Restore playlist error", e);
+  }
+}
+
+// Same idea as restorePlaylistAndAdvance, but for interrupting Spotify briefly for
+// something outside the live show (recording a voice clip with background music
+// playing) rather than moving on to the next radio block: put the real playlist
+// back on the exact track it was on and keep playing from the exact position it
+// was at, instead of skipping ahead and pausing.
+async function restorePlaylistAndResume() {
+  if (!savedPlaylistContext || !deviceId || !accessToken) { savedPlaylistContext = null; return; }
+  const { contextUri, trackUri, progressMs } = savedPlaylistContext;
+  savedPlaylistContext = null;
+  try {
+    const restored = await spotifyRequestWithRetry(
+      `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
+      "PUT",
+      { context_uri: contextUri, offset: { uri: trackUri } }
+    );
+    if (!restored) {
+      console.error("Restore playlist error: Spotify didn't accept the restore command after retries");
+      return;
+    }
+    if (progressMs) {
+      await new Promise(r => setTimeout(r, 250));
+      await seekSpotify(progressMs);
+    }
   } catch (e) {
     console.error("Restore playlist error", e);
   }
@@ -1120,43 +1191,66 @@ async function pollCurrentTrack() {
   }
 }
 
-// Spotify Connect can carry a playlist across song boundaries before its
-// state poll arrives. Guard the final song using its reported duration, then
-// pause and enter the next radio block just before Spotify can overflow.
+// Spotify Connect can carry a playlist across song boundaries before its state
+// poll arrives. Guard the final song using its reported duration, then pause and
+// enter the next radio block just before Spotify can overflow.
+//
+// This used to pre-compute a single delay and hand it to one setTimeout, trusted
+// to fire at exactly the right moment. That's fragile: a phone browser tab that
+// gets backgrounded even briefly (screen lock, switching apps to check the
+// recording, etc.) gets its timers throttled by the OS/browser, which can delay
+// that one timer well past its target — and once it's late, there's no way to
+// recover, because the loop has already happened. Confirmed with a stress test:
+// forcing just two retried pause attempts pushed the fire time past the track's
+// actual end.
+//
+// Instead, this re-checks "is it time to pause yet?" on every poll tick (every
+// 150ms once we're close) using always-fresh data, and fires the moment the
+// answer is yes. If one tick is late for any reason, the next tick catches up
+// and reacts immediately — nothing is riding on a single precisely-timed event.
+let songEndGuardFired = false;
+
 function scheduleSongEndGuard() {
-  if (endGuardTimer) { clearTimeout(endGuardTimer); endGuardTimer = null; }
   if (!isPlaying || isPaused || !trackDurationMs) return;
   const block = blocks[currentBlockIndex];
   if (!block || block.type !== "songs" || songsPlayedInBlock < block.count - 1) return;
   const remainingMs = trackDurationMs - trackProgressMsAtPoll - (Date.now() - trackProgressPolledAt);
-  // Once we're in the home stretch, poll much more often so this estimate stays
-  // fresh right when the guard below needs it most.
+  // Once we're in the home stretch, poll much more often so this stays fresh
+  // right when it matters most.
   setTrackPollFast(remainingMs < TRACK_POLL_FAST_THRESHOLD_MS);
-  // Fire a little before the song's reported end, not right at it. Even with an
-  // accurate progress reading (see the timestamp fix in pollCurrentTrack) there's
-  // still one-way latency for the pause command itself to reach Spotify, plus
-  // ordinary jitter — so aiming for the exact end (previously only an 80ms margin)
-  // meant this guard sometimes lost the race against Spotify's own "repeat: track"
-  // looping the song back to 0, which is what was heard as the song "repeating
-  // itself". A small cushion trims a fraction of a second off the very end
-  // instead, which is inaudible, but reliably wins the race.
-  const SONG_END_GUARD_MARGIN_MS = 350;
-  endGuardTimer = setTimeout(async () => {
-    endGuardTimer = null;
-    if (!isPlaying || isPaused || blocks[currentBlockIndex] !== block) return;
-    if (repeatTrackArmPromise) await repeatTrackArmPromise;
-    if (!isPlaying || isPaused || blocks[currentBlockIndex] !== block) {
-      await setRepeatMode("off");
-      return;
-    }
-    await pauseSpotify();
+  // Treat "within this many ms of the end" as "time to pause", not the exact end.
+  // Even with fresh, unbiased progress data there's still one-way latency for the
+  // pause command to reach Spotify, plus the real chance of a transient 502/503
+  // needing a retry (confirmed happening live) — so this margin needs to comfortably
+  // cover a full poll interval plus a retried pause, or the guard can still lose the
+  // race against Spotify's own "repeat: track" looping the song back to 0, which is
+  // what was heard as the song "repeating itself". Trimming under a second off the
+  // very end is inaudible; repeating the song is not.
+  const SONG_END_GUARD_MARGIN_MS = 1300;
+  if (remainingMs > SONG_END_GUARD_MARGIN_MS) return; // not yet — the next tick checks again
+  if (songEndGuardFired) return; // already handling this song's end
+  songEndGuardFired = true;
+  fireSongEndGuard(block);
+}
+
+async function fireSongEndGuard(block) {
+  if (!isPlaying || isPaused || blocks[currentBlockIndex] !== block) return;
+  if (repeatTrackArmPromise) await repeatTrackArmPromise;
+  if (!isPlaying || isPaused || blocks[currentBlockIndex] !== block) {
     await setRepeatMode("off");
-    if (!isPlaying || isPaused || blocks[currentBlockIndex] !== block) return;
-    isPlaying = false;
-    currentBlockIndex++;
-    songsPlayedInBlock = 0;
-    runCurrentBlock();
-  }, Math.max(0, remainingMs - SONG_END_GUARD_MARGIN_MS));
+    return;
+  }
+  // This exact pause is racing Spotify's own repeat-track loop, so unlike every
+  // other command it can't afford the usual 500ms backoff between retries if the
+  // first attempt 503s — every extra millisecond here is a millisecond closer to
+  // the song audibly repeating. Retry immediately instead.
+  await spotifyRequestWithRetry(`https://api.spotify.com/v1/me/player/pause?device_id=${deviceId}`, "PUT", undefined, 3, 0);
+  await setRepeatMode("off");
+  if (!isPlaying || isPaused || blocks[currentBlockIndex] !== block) return;
+  isPlaying = false;
+  currentBlockIndex++;
+  songsPlayedInBlock = 0;
+  runCurrentBlock();
 }
 
 // Between polls, estimate the song's live position so the progress bar and
@@ -1179,7 +1273,7 @@ const TRACK_POLL_NORMAL_MS = 900;
 // staleness matters a lot more (it's a much bigger fraction of what's left), so
 // switch to polling much more often right when it counts instead of paying that
 // cost for the whole song.
-const TRACK_POLL_FAST_MS = 250;
+const TRACK_POLL_FAST_MS = 150;
 const TRACK_POLL_FAST_THRESHOLD_MS = 4000;
 let trackPollFast = false;
 
@@ -1189,6 +1283,7 @@ function startTrackPolling() {
   // track changes, so this poll is the only way we find out — and the parent
   // noticed the "Song X of Y" display visibly lagging behind the real audio.
   trackPollFast = false;
+  songEndGuardFired = false;
   trackPollInterval = setInterval(pollCurrentTrack, TRACK_POLL_NORMAL_MS);
 }
 
@@ -1201,7 +1296,6 @@ function setTrackPollFast(fast) {
 
 function stopTrackPolling() {
   if (trackPollInterval) { clearInterval(trackPollInterval); trackPollInterval = null; }
-  if (endGuardTimer) { clearTimeout(endGuardTimer); endGuardTimer = null; }
   trackPollFast = false;
 }
 
