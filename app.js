@@ -331,7 +331,8 @@ function renderBlocks() {
         <button class="delete-btn" data-action="delete">×</button>
       `;
     } else {
-      leftContent = `<span class="block-icon">${TYPE_ICONS[block.type]}</span> ${TYPE_LABELS[block.type]} <span class="block-mode-badge">${MODE_LABELS[block.mode] || ""}</span>`;
+      const modeLabel = (MODE_LABELS[block.mode] || "") + (block.mode === "record" && block.bgMusic ? " + 🎶" : "");
+      leftContent = `<span class="block-icon">${TYPE_ICONS[block.type]}</span> ${TYPE_LABELS[block.type]} <span class="block-mode-badge">${modeLabel}</span>`;
       rightContent = `<button class="edit-btn" data-action="edit">✎</button><button class="delete-btn" data-action="delete">×</button>`;
     }
 
@@ -581,10 +582,12 @@ const recorderTimer = document.getElementById("recorder-timer");
 const recorderPreview = document.getElementById("recorder-preview");
 const recorderSaveBtn = document.getElementById("recorder-save-btn");
 const recorderRetryBtn = document.getElementById("recorder-retry-btn");
+const recorderBgToggle = document.getElementById("recorder-bg-toggle");
 
 function openRecorderModal(block) {
   modeModalTarget = block;
   resetRecorderUI();
+  if (recorderBgToggle) recorderBgToggle.checked = !!block.bgMusic;
   recorderModal.classList.remove("hidden");
 }
 
@@ -625,7 +628,14 @@ recorderMainBtn.addEventListener("click", async () => {
     return;
   }
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Chrome/Brave's default mic pipeline (echo cancellation + noise suppression +
+    // auto gain control) is tuned for two-way calls, and on some builds it briefly
+    // mutes the stream when it misclassifies a pause in speech as "echo" or when the
+    // AGC re-levels — this is what caused random ~silence gaps in the middle of
+    // recordings. We're not on a call, so turn all of that off for a clean capture.
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
   } catch (e) {
     alert("Couldn't access the microphone. Please allow microphone permission and try again.");
     return;
@@ -665,6 +675,7 @@ recorderSaveBtn.addEventListener("click", async () => {
   if (!block || !pendingRecordingBlob) return;
   await saveRecording(block.id, pendingRecordingBlob);
   block.mode = "record";
+  block.bgMusic = !!(recorderBgToggle && recorderBgToggle.checked);
   finalizeBlockAdd(block);
   recorderModal.classList.add("hidden");
 });
@@ -1100,6 +1111,14 @@ function scheduleSongEndGuard() {
   const block = blocks[currentBlockIndex];
   if (!block || block.type !== "songs" || songsPlayedInBlock < block.count - 1) return;
   const remainingMs = trackDurationMs - trackProgressMsAtPoll - (Date.now() - trackProgressPolledAt);
+  // Fire well before the song's reported end, not right at it. The progress reading
+  // is already stale by however long the Spotify API call + our 900ms poll interval
+  // took, so aiming for the exact end (previously only an 80ms margin) meant this
+  // guard sometimes lost the race against Spotify's own "repeat: track" looping the
+  // song back to 0 — which is what was heard as the last song "repeating itself".
+  // A bigger cushion trims a fraction of a second off the very end instead, which is
+  // inaudible, but reliably wins the race.
+  const SONG_END_GUARD_MARGIN_MS = 600;
   endGuardTimer = setTimeout(async () => {
     endGuardTimer = null;
     if (!isPlaying || isPaused || blocks[currentBlockIndex] !== block) return;
@@ -1115,7 +1134,7 @@ function scheduleSongEndGuard() {
     currentBlockIndex++;
     songsPlayedInBlock = 0;
     runCurrentBlock();
-  }, Math.max(0, remainingMs - 80));
+  }, Math.max(0, remainingMs - SONG_END_GUARD_MARGIN_MS));
 }
 
 // Between polls, estimate the song's live position so the progress bar and
@@ -1350,33 +1369,65 @@ async function runCurrentBlock() {
   const label = TYPE_LABELS[block.type];
 
   if (block.mode === "record") {
-    await pauseSpotify();
-    updateLiveUI(label, "Playing recording...", "Listen up!");
+    const bgRaw = bgMusicInput.value.trim();
+    const bgUri = block.bgMusic ? extractPlaylistOrTrackUri(bgRaw) : null;
+
+    async function endRecordBlock() {
+      if (bgUri) {
+        await setSpotifyVolume(0.8);
+        await setRepeatMode("off");
+        await restorePlaylistAndAdvance();
+      } else {
+        await pauseSpotify();
+      }
+      currentBlockIndex++;
+      runCurrentBlock();
+    }
+
     if (resuming && activeAudioEl) {
+      updateLiveUI(label, "Playing recording...", bgUri ? "Recording + background music" : "Listen up!");
+      if (bgUri) await resumeSpotify();
       updateProgress(activeAudioEl.currentTime, activeAudioEl.duration);
       activeAudioEl.play().catch(() => {});
       return;
     }
+
     activeAudioEl = null;
     const blob = await loadRecording(block.id);
     if (!blob) {
       // No recording saved, fall back to a short quiet pause
+      await pauseSpotify();
       updateLiveUI(label, "🤫 ...", "(no recording found)");
       updateProgress(0, 0);
       activePlaybackTimer = setTimeout(() => { currentBlockIndex++; runCurrentBlock(); }, 3000);
       return;
     }
+
+    if (bgUri) {
+      // Same handoff as a "background" block: remember where the real playlist
+      // was, then divert Spotify to the background music, ducked under the
+      // recording, while the recorded voice plays locally in this tab.
+      updateLiveUI(label, "Playing recording...", "Recording + background music");
+      await snapshotPlaylistContext();
+      const isTrack = bgUri.startsWith("spotify:track:");
+      await setRepeatMode(isTrack ? "track" : "context");
+      await setSpotifyVolume(0.25);
+      await playContextUri(bgUri, isTrack);
+    } else {
+      await pauseSpotify();
+      updateLiveUI(label, "Playing recording...", "Listen up!");
+    }
+
     const audio = new Audio(URL.createObjectURL(blob));
     activeAudioEl = audio;
     audio.addEventListener("loadedmetadata", () => updateProgress(0, audio.duration));
     audio.addEventListener("timeupdate", () => { if (!isScrubbing) updateProgress(audio.currentTime, audio.duration); });
     audio.addEventListener("ended", () => {
       activeAudioEl = null;
-      currentBlockIndex++;
-      runCurrentBlock();
+      endRecordBlock();
     });
     audio.play().catch(() => {
-      activePlaybackTimer = setTimeout(() => { currentBlockIndex++; runCurrentBlock(); }, 3000);
+      activePlaybackTimer = setTimeout(endRecordBlock, 3000);
     });
   }
   else if (block.mode === "background") {
@@ -1394,6 +1445,7 @@ async function runCurrentBlock() {
       if (blockRemainingSeconds <= 0) {
         blockRemainingSeconds = null;
         blockDurationSeconds = null;
+        await setSpotifyVolume(0.8);
         await setRepeatMode("off");
         await restorePlaylistAndAdvance();
         currentBlockIndex++;
