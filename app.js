@@ -886,19 +886,23 @@ if (refreshDeviceBtn) {
   refreshDeviceBtn.addEventListener("click", () => ensureDevice());
 }
 
-// Spotify's Connect endpoints occasionally answer a play/transfer command with a
-// transient 502/503 right after another command was just sent to the same device
-// (it's still catching up) — confirmed live: the "restore the real playlist"
-// call after a background-music handoff failed this way, silently leaving
-// Spotify parked on the background track instead of the show's real playlist,
-// because nothing checked the response or tried again. A couple of quick
-// retries clears this up without the listener ever noticing.
-async function putSpotifyWithRetry(url, body, retries = 2, backoffMs = 500) {
+// Spotify's Connect endpoints occasionally answer a command with a transient
+// 502/503 right after another command was just sent to the same device (it's
+// still catching up) — confirmed live, and more often than a one-off: a single
+// test run of one background-music handoff and its restore logged 503s on the
+// volume, transfer-playback, play, and volume-restore calls, all silently
+// dropped because nothing checked the response or tried again. Every command
+// that changes what Spotify is doing now goes through this, so a transient
+// failure gets a couple of quick retries instead of just vanishing.
+async function spotifyRequestWithRetry(url, method, body, retries = 2, backoffMs = 500) {
+  if (!deviceId || !accessToken) return false;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const res = await fetch(url, {
-        method: "PUT",
-        headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        method,
+        headers: body !== undefined
+          ? { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" }
+          : { "Authorization": `Bearer ${accessToken}` },
         body: body !== undefined ? JSON.stringify(body) : undefined
       });
       if (res.ok || res.status === 204) return true;
@@ -929,14 +933,10 @@ function extractPlaylistOrTrackUri(urlOrUri) {
 async function playContextUri(contextUri, isTrack, offsetPosition = 0) {
   if (!deviceId || !accessToken) return false;
   try {
-    await fetch(`https://api.spotify.com/v1/me/player`, {
-      method: "PUT",
-      headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ device_ids: [deviceId], play: false })
-    });
+    await spotifyRequestWithRetry(`https://api.spotify.com/v1/me/player`, "PUT", { device_ids: [deviceId], play: false });
     await new Promise(r => setTimeout(r, 400));
     const body = isTrack ? { uris: [contextUri] } : { context_uri: contextUri, offset: { position: offsetPosition } };
-    return await putSpotifyWithRetry(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, body);
+    return await spotifyRequestWithRetry(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, "PUT", body);
   } catch (e) {
     console.error("Playback error", e);
     return false;
@@ -980,65 +980,33 @@ async function playNextSpotifyTrack() {
 }
 
 async function nextTrackSpotify() {
-  if (!deviceId || !accessToken) return;
-  try {
-    await fetch(`https://api.spotify.com/v1/me/player/next?device_id=${deviceId}`, {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${accessToken}` }
-    });
-  } catch (e) {}
+  await spotifyRequestWithRetry(`https://api.spotify.com/v1/me/player/next?device_id=${deviceId}`, "POST");
 }
 
 async function pauseSpotify() {
-  if (!deviceId || !accessToken) return;
-  try {
-    await fetch(`https://api.spotify.com/v1/me/player/pause?device_id=${deviceId}`, {
-      method: "PUT",
-      headers: { "Authorization": `Bearer ${accessToken}` }
-    });
-  } catch (e) {}
+  await spotifyRequestWithRetry(`https://api.spotify.com/v1/me/player/pause?device_id=${deviceId}`, "PUT");
 }
 
 async function resumeSpotify() {
-  if (!deviceId || !accessToken) return;
-  try {
-    await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
-      method: "PUT",
-      headers: { "Authorization": `Bearer ${accessToken}` }
-    });
-  } catch (e) {}
+  await spotifyRequestWithRetry(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, "PUT");
 }
 
 async function setSpotifyVolume(percent0to1) {
   if (!deviceId || !accessToken) return;
   currentVolumePercent = Math.round(percent0to1 * 100);
-  try {
-    await fetch(`https://api.spotify.com/v1/me/player/volume?volume_percent=${currentVolumePercent}&device_id=${deviceId}`, {
-      method: "PUT",
-      headers: { "Authorization": `Bearer ${accessToken}` }
-    });
-  } catch (e) {}
+  await spotifyRequestWithRetry(`https://api.spotify.com/v1/me/player/volume?volume_percent=${currentVolumePercent}&device_id=${deviceId}`, "PUT");
 }
 
 // state: "track" | "context" | "off" — used so background music can loop for
 // as long as its block's duration needs, even past the track/playlist's own length.
 async function setRepeatMode(state) {
-  if (!deviceId || !accessToken) return;
-  try {
-    await fetch(`https://api.spotify.com/v1/me/player/repeat?state=${state}&device_id=${deviceId}`, {
-      method: "PUT",
-      headers: { "Authorization": `Bearer ${accessToken}` }
-    });
-  } catch (e) {}
+  await spotifyRequestWithRetry(`https://api.spotify.com/v1/me/player/repeat?state=${state}&device_id=${deviceId}`, "PUT");
 }
 
 async function seekSpotify(positionMs) {
   if (!deviceId || !accessToken) return;
   try {
-    await fetch(`https://api.spotify.com/v1/me/player/seek?position_ms=${Math.round(positionMs)}&device_id=${deviceId}`, {
-      method: "PUT",
-      headers: { "Authorization": `Bearer ${accessToken}` }
-    });
+    await spotifyRequestWithRetry(`https://api.spotify.com/v1/me/player/seek?position_ms=${Math.round(positionMs)}&device_id=${deviceId}`, "PUT");
   } catch (e) {}
 }
 
@@ -1070,8 +1038,9 @@ async function restorePlaylistAndAdvance() {
   const { contextUri, trackUri } = savedPlaylistContext;
   savedPlaylistContext = null;
   try {
-    const restored = await putSpotifyWithRetry(
+    const restored = await spotifyRequestWithRetry(
       `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
+      "PUT",
       { context_uri: contextUri, offset: { uri: trackUri } }
     );
     if (!restored) {
