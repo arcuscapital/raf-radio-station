@@ -1061,6 +1061,16 @@ async function pollCurrentTrack() {
   if (!isPlaying || !accessToken) return;
   if (trackPollInFlight) { trackPollQueued = true; return; }
   trackPollInFlight = true;
+  // Spotify reports progress_ms as of the moment it received this request, not as
+  // of the moment the response gets back to us — and that gap (network latency,
+  // typically 100-400ms on a phone, more on bad wifi) was the actual root cause of
+  // the last song in a block occasionally repeating: stamping the reading with
+  // Date.now() *after* awaiting the response made the app believe more time was
+  // left in the song than really was, so the "pause before it loops" guard below
+  // fired late. Stamping it with the time the request went out instead removes
+  // that bias at the source, rather than just padding the guard's margin to guess
+  // around it.
+  const requestStartedAt = Date.now();
   try {
     const res = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {
       headers: { "Authorization": `Bearer ${accessToken}` }
@@ -1070,7 +1080,7 @@ async function pollCurrentTrack() {
     if (data.item) {
       trackDurationMs = data.item.duration_ms || 0;
       trackProgressMsAtPoll = data.progress_ms || 0;
-      trackProgressPolledAt = Date.now();
+      trackProgressPolledAt = requestStartedAt;
       scheduleSongEndGuard();
     }
     const uri = data.item?.uri;
@@ -1111,14 +1121,18 @@ function scheduleSongEndGuard() {
   const block = blocks[currentBlockIndex];
   if (!block || block.type !== "songs" || songsPlayedInBlock < block.count - 1) return;
   const remainingMs = trackDurationMs - trackProgressMsAtPoll - (Date.now() - trackProgressPolledAt);
-  // Fire well before the song's reported end, not right at it. The progress reading
-  // is already stale by however long the Spotify API call + our 900ms poll interval
-  // took, so aiming for the exact end (previously only an 80ms margin) meant this
-  // guard sometimes lost the race against Spotify's own "repeat: track" looping the
-  // song back to 0 — which is what was heard as the last song "repeating itself".
-  // A bigger cushion trims a fraction of a second off the very end instead, which is
-  // inaudible, but reliably wins the race.
-  const SONG_END_GUARD_MARGIN_MS = 600;
+  // Once we're in the home stretch, poll much more often so this estimate stays
+  // fresh right when the guard below needs it most.
+  setTrackPollFast(remainingMs < TRACK_POLL_FAST_THRESHOLD_MS);
+  // Fire a little before the song's reported end, not right at it. Even with an
+  // accurate progress reading (see the timestamp fix in pollCurrentTrack) there's
+  // still one-way latency for the pause command itself to reach Spotify, plus
+  // ordinary jitter — so aiming for the exact end (previously only an 80ms margin)
+  // meant this guard sometimes lost the race against Spotify's own "repeat: track"
+  // looping the song back to 0, which is what was heard as the song "repeating
+  // itself". A small cushion trims a fraction of a second off the very end
+  // instead, which is inaudible, but reliably wins the race.
+  const SONG_END_GUARD_MARGIN_MS = 350;
   endGuardTimer = setTimeout(async () => {
     endGuardTimer = null;
     if (!isPlaying || isPaused || blocks[currentBlockIndex] !== block) return;
@@ -1152,17 +1166,35 @@ function stopProgressTicker() {
   if (progressTickInterval) { clearInterval(progressTickInterval); progressTickInterval = null; }
 }
 
+const TRACK_POLL_NORMAL_MS = 900;
+// Once the last song of a block is down to its final few seconds, every poll's
+// staleness matters a lot more (it's a much bigger fraction of what's left), so
+// switch to polling much more often right when it counts instead of paying that
+// cost for the whole song.
+const TRACK_POLL_FAST_MS = 250;
+const TRACK_POLL_FAST_THRESHOLD_MS = 4000;
+let trackPollFast = false;
+
 function startTrackPolling() {
   stopTrackPolling();
   // Fairly short interval: Spotify Connect gives us no push notification when a
   // track changes, so this poll is the only way we find out — and the parent
   // noticed the "Song X of Y" display visibly lagging behind the real audio.
-  trackPollInterval = setInterval(pollCurrentTrack, 900);
+  trackPollFast = false;
+  trackPollInterval = setInterval(pollCurrentTrack, TRACK_POLL_NORMAL_MS);
+}
+
+function setTrackPollFast(fast) {
+  if (fast === trackPollFast || !trackPollInterval) return;
+  trackPollFast = fast;
+  clearInterval(trackPollInterval);
+  trackPollInterval = setInterval(pollCurrentTrack, fast ? TRACK_POLL_FAST_MS : TRACK_POLL_NORMAL_MS);
 }
 
 function stopTrackPolling() {
   if (trackPollInterval) { clearInterval(trackPollInterval); trackPollInterval = null; }
   if (endGuardTimer) { clearTimeout(endGuardTimer); endGuardTimer = null; }
+  trackPollFast = false;
 }
 
 // ====================== SHOW ENGINE ======================
