@@ -1076,22 +1076,49 @@ async function snapshotPlaylistContext() {
   } catch (e) {}
 }
 
+// Restoring the real playlist is more failure-prone than any other command here:
+// confirmed live, Spotify can answer the restore's play command with a plain
+// success (204) — no error to retry on — and still silently keep playing the
+// diverted background track, if that command lands too soon after other
+// commands were just sent to the same device. A retry-on-error helper can't
+// catch this because Spotify never reports an error. So after asking Spotify to
+// switch back, actually check what it's playing, and if it didn't take, ask
+// again — up to a few times — before giving up.
+async function restoreContextWithVerification(contextUri, trackUri, attempts = 3) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const accepted = await spotifyRequestWithRetry(
+      `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
+      "PUT",
+      { context_uri: contextUri, offset: { uri: trackUri } }
+    );
+    if (!accepted) continue;
+    await new Promise(r => setTimeout(r, 500));
+    try {
+      const res = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {
+        headers: { "Authorization": `Bearer ${accessToken}` }
+      });
+      if (res.ok && res.status !== 204) {
+        const data = await res.json();
+        if (data.context?.uri === contextUri) return true;
+      }
+    } catch (e) {}
+  }
+  return false;
+}
+
 async function restorePlaylistAndAdvance() {
   if (!savedPlaylistContext || !deviceId || !accessToken) { savedPlaylistContext = null; return; }
   const { contextUri, trackUri } = savedPlaylistContext;
   savedPlaylistContext = null;
   try {
-    const restored = await spotifyRequestWithRetry(
-      `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
-      "PUT",
-      { context_uri: contextUri, offset: { uri: trackUri } }
-    );
+    const restored = await restoreContextWithVerification(contextUri, trackUri);
     if (!restored) {
-      // Spotify never accepted the restore even after retrying — it's still sitting
-      // on the background track. Skipping/pausing here would only move it further
-      // into the wrong context, so leave it alone; the defensive repeat-mode reset
-      // at the start of the next Songs block is the next chance to recover.
-      console.error("Restore playlist error: Spotify didn't accept the restore command after retries");
+      // Spotify never actually switched back even after retrying — it's still
+      // sitting on the background track. Skipping/pausing here would only move it
+      // further into the wrong context, so leave it alone; the defensive
+      // repeat-mode reset at the start of the next Songs block is the next
+      // chance to recover.
+      console.error("Restore playlist error: Spotify never actually switched back after retries");
       return;
     }
     await new Promise(r => setTimeout(r, 300));
@@ -1114,13 +1141,9 @@ async function restorePlaylistAndResume() {
   const { contextUri, trackUri, progressMs } = savedPlaylistContext;
   savedPlaylistContext = null;
   try {
-    const restored = await spotifyRequestWithRetry(
-      `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
-      "PUT",
-      { context_uri: contextUri, offset: { uri: trackUri } }
-    );
+    const restored = await restoreContextWithVerification(contextUri, trackUri);
     if (!restored) {
-      console.error("Restore playlist error: Spotify didn't accept the restore command after retries");
+      console.error("Restore playlist error: Spotify never actually switched back after retries");
       return;
     }
     if (progressMs) {
