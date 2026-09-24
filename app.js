@@ -668,7 +668,7 @@ async function stopRecordingBgMusicIfNeeded() {
   await restorePlaylistAndResume();
   const restoreVolume = typeof volumeBeforeRecording === "number" ? volumeBeforeRecording : 80;
   volumeBeforeRecording = null;
-  await setSpotifyVolume(restoreVolume / 100);
+  await setSpotifyVolumeVerified(restoreVolume / 100);
 }
 
 recorderMainBtn.addEventListener("click", async () => {
@@ -1106,6 +1106,49 @@ async function restoreContextWithVerification(contextUri, trackUri, attempts = 3
   return false;
 }
 
+// The same "accepted but silently ignored" flakiness affects seek and volume too
+// (confirmed live: a restore that got the context back right still landed on the
+// wrong position and the wrong volume). Generic helper: apply an action, check
+// whether it actually took, retry if not.
+async function applyAndVerify(applyFn, checkFn, attempts = 3, waitMs = 500) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    await applyFn();
+    await new Promise(r => setTimeout(r, waitMs));
+    try {
+      if (await checkFn()) return true;
+    } catch (e) {}
+  }
+  return false;
+}
+
+async function seekSpotifyVerified(positionMs, toleranceMs = 3000) {
+  if (!deviceId || !accessToken) return;
+  await applyAndVerify(
+    () => seekSpotify(positionMs),
+    async () => {
+      const res = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {
+        headers: { "Authorization": `Bearer ${accessToken}` }
+      });
+      if (!res.ok || res.status === 204) return false;
+      const data = await res.json();
+      return typeof data.progress_ms === "number" && Math.abs(data.progress_ms - positionMs) < toleranceMs;
+    }
+  );
+}
+
+async function setSpotifyVolumeVerified(percent0to1) {
+  if (!deviceId || !accessToken) return;
+  const target = Math.round(percent0to1 * 100);
+  await applyAndVerify(
+    () => setSpotifyVolume(percent0to1),
+    async () => {
+      const { devices } = await fetchDevices();
+      const dev = devices.find(d => d.id === deviceId) || devices[0];
+      return !!dev && dev.volume_percent === target;
+    }
+  );
+}
+
 async function restorePlaylistAndAdvance() {
   if (!savedPlaylistContext || !deviceId || !accessToken) { savedPlaylistContext = null; return; }
   const { contextUri, trackUri } = savedPlaylistContext;
@@ -1148,7 +1191,7 @@ async function restorePlaylistAndResume() {
     }
     if (progressMs) {
       await new Promise(r => setTimeout(r, 250));
-      await seekSpotify(progressMs);
+      await seekSpotifyVerified(progressMs);
     }
   } catch (e) {
     console.error("Restore playlist error", e);
@@ -1531,7 +1574,7 @@ async function runCurrentBlock() {
 
     async function endRecordBlock() {
       if (bgUri) {
-        await setSpotifyVolume(0.8);
+        await setSpotifyVolumeVerified(0.8);
         await setRepeatMode("off");
         await restorePlaylistAndAdvance();
       } else {
@@ -1602,7 +1645,7 @@ async function runCurrentBlock() {
       if (blockRemainingSeconds <= 0) {
         blockRemainingSeconds = null;
         blockDurationSeconds = null;
-        await setSpotifyVolume(0.8);
+        await setSpotifyVolumeVerified(0.8);
         await setRepeatMode("off");
         await restorePlaylistAndAdvance();
         currentBlockIndex++;
@@ -1775,7 +1818,7 @@ finishedTalkingBtn.addEventListener("click", async () => {
   clearActivePlayback();
   blockRemainingSeconds = null;
   blockDurationSeconds = null;
-  await setSpotifyVolume(0.8);
+  await setSpotifyVolumeVerified(0.8);
   await setRepeatMode("off");
   await restorePlaylistAndAdvance();
   currentBlockIndex++;
