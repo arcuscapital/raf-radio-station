@@ -227,8 +227,9 @@
     <div class="modal-content">
       <h3 id="mode-modal-title">How should this work?</h3>
       <button class="mode-btn" data-mode="quiet">🤫 Quiet</button>
-      <button class="mode-btn" data-mode="record">🎙️ Record my own voice</button>
-      <button class="mode-btn" data-mode="background">🎶 Background Music</button>
+      <button class="mode-btn" data-mode="record-quiet">🎙️ Record my own voice</button>
+      <button class="mode-btn" data-mode="record-bg">🎙️🎶 Record my own voice – background music</button>
+      <button class="mode-btn" data-mode="background">🎶 Background Music only</button>
       <button id="close-mode-modal" class="btn btn-cancel">Cancel</button>
     </div>
   </div>
@@ -254,10 +255,6 @@
     <div class="modal-content">
       <h3>Record your voice</h3>
       <p class="recorder-hint" id="recorder-hint">Tap the button, say your bit, then tap stop.</p>
-      <label class="recorder-bg-toggle">
-        <input type="checkbox" id="recorder-bg-toggle" />
-        🎶 Play background music under this when it airs
-      </label>
       <button id="recorder-main-btn" class="btn btn-record">⏺ Start Recording</button>
       <div id="recorder-timer" class="record-timer hidden">00:00</div>
       <audio id="recorder-preview" class="hidden" controls></audio>

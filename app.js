@@ -516,8 +516,10 @@ document.querySelectorAll(".mode-btn").forEach(btn => {
       openDurationModal(block, "quiet");
     } else if (mode === "background") {
       openDurationModal(block, "background");
-    } else if (mode === "record") {
-      openRecorderModal(block);
+    } else if (mode === "record-quiet") {
+      openRecorderModal(block, /* withBgMusic */ false);
+    } else if (mode === "record-bg") {
+      openRecorderModal(block, /* withBgMusic */ true);
     }
   });
 });
@@ -582,12 +584,18 @@ const recorderTimer = document.getElementById("recorder-timer");
 const recorderPreview = document.getElementById("recorder-preview");
 const recorderSaveBtn = document.getElementById("recorder-save-btn");
 const recorderRetryBtn = document.getElementById("recorder-retry-btn");
-const recorderBgToggle = document.getElementById("recorder-bg-toggle");
+const recorderHint = document.getElementById("recorder-hint");
+let pendingRecordBgMusic = false;
 
-function openRecorderModal(block) {
+function openRecorderModal(block, withBgMusic) {
   modeModalTarget = block;
+  pendingRecordBgMusic = withBgMusic;
   resetRecorderUI();
-  if (recorderBgToggle) recorderBgToggle.checked = !!block.bgMusic;
+  if (recorderHint) {
+    recorderHint.textContent = withBgMusic
+      ? "Tap the button, say your bit, then tap stop. Background music will play under this when it airs."
+      : "Tap the button, say your bit, then tap stop.";
+  }
   recorderModal.classList.remove("hidden");
 }
 
@@ -675,7 +683,7 @@ recorderSaveBtn.addEventListener("click", async () => {
   if (!block || !pendingRecordingBlob) return;
   await saveRecording(block.id, pendingRecordingBlob);
   block.mode = "record";
-  block.bgMusic = !!(recorderBgToggle && recorderBgToggle.checked);
+  block.bgMusic = !!pendingRecordBgMusic;
   finalizeBlockAdd(block);
   recorderModal.classList.add("hidden");
 });
