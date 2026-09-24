@@ -7,7 +7,11 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <title>Krom FM</title>
-  <link rel="stylesheet" href="style.css" />
+  <!-- IMPORTANT: bump the ?v= on this and the app.js <script> tag below on every
+       deploy. Without it, phones (and browsers generally) can keep serving a
+       cached copy of the old script/styles indefinitely after a redeploy — a
+       fix can be live on GitHub Pages and still not actually reach anyone. -->
+  <link rel="stylesheet" href="style.css?v=20260924-2" />
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="icon.png" />
 </head>
@@ -274,6 +278,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=20260924-endguard-1"></script>
+  <script src="app.js?v=20260924-2"></script>
 </body>
 </html>
