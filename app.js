@@ -108,6 +108,8 @@ let blockDurationSeconds = null;
 let trackDurationMs = 0;    // for the songs progress bar
 let trackProgressMsAtPoll = 0;
 let trackProgressPolledAt = 0;
+let endGuardTimer = null;
+let lastHandledTrackUri = null;
 let progressTickInterval = null;
 let isScrubbing = false; // true while the child is dragging the progress bar
 
@@ -927,8 +929,6 @@ async function startPlaylistPlayback() {
 async function playNextSpotifyTrack() {
   if (songsPlayedInBlock === 0) {
     await startPlaylistPlayback();
-  } else {
-    await nextTrackSpotify();
   }
 }
 
@@ -1054,6 +1054,7 @@ async function pollCurrentTrack() {
       trackDurationMs = data.item.duration_ms || 0;
       trackProgressMsAtPoll = data.progress_ms || 0;
       trackProgressPolledAt = Date.now();
+      scheduleSongEndGuard();
     }
     const uri = data.item?.uri;
     if (uri && uri !== lastTrackUri) {
@@ -1062,9 +1063,34 @@ async function pollCurrentTrack() {
       if (data.item && statusSub) {
         statusSub.textContent = data.item.name + " – " + (data.item.artists?.[0]?.name || "");
       }
-      if (!isFirst) onTrackEnded();
+      if (!isFirst && uri !== lastHandledTrackUri) {
+        lastHandledTrackUri = uri;
+        onTrackEnded();
+        scheduleSongEndGuard();
+      }
     }
   } catch (e) {}
+}
+
+// Spotify Connect can carry a playlist across song boundaries before its
+// state poll arrives. Guard the final song using its reported duration, then
+// pause and enter the next radio block just before Spotify can overflow.
+function scheduleSongEndGuard() {
+  if (endGuardTimer) { clearTimeout(endGuardTimer); endGuardTimer = null; }
+  if (!isPlaying || isPaused || !trackDurationMs) return;
+  const block = blocks[currentBlockIndex];
+  if (!block || block.type !== "songs" || songsPlayedInBlock < block.count - 1) return;
+  const remainingMs = trackDurationMs - trackProgressMsAtPoll;
+  endGuardTimer = setTimeout(async () => {
+    endGuardTimer = null;
+    if (!isPlaying || isPaused || blocks[currentBlockIndex] !== block) return;
+    await pauseSpotify();
+    if (!isPlaying || isPaused || blocks[currentBlockIndex] !== block) return;
+    isPlaying = false;
+    currentBlockIndex++;
+    songsPlayedInBlock = 0;
+    runCurrentBlock();
+  }, Math.max(0, remainingMs - 700));
 }
 
 // Between polls, estimate the song's live position so the progress bar and
@@ -1092,6 +1118,7 @@ function startTrackPolling() {
 
 function stopTrackPolling() {
   if (trackPollInterval) { clearInterval(trackPollInterval); trackPollInterval = null; }
+  if (endGuardTimer) { clearTimeout(endGuardTimer); endGuardTimer = null; }
 }
 
 // ====================== SHOW ENGINE ======================
@@ -1273,6 +1300,7 @@ async function runCurrentBlock() {
     if (!resuming) {
       songsPlayedInBlock = 0;
       lastTrackUri = null;
+      lastHandledTrackUri = null;
     }
     updateLiveUI("Now Playing", `Song ${songsPlayedInBlock + 1} of ${block.count}`, resuming ? "Resuming..." : "Starting playlist...");
     isPlaying = true;
@@ -1379,7 +1407,15 @@ async function runCurrentBlock() {
       blockRemainingSeconds = duration;
       blockDurationSeconds = duration;
     }
-    updateLiveUI(label, block.type === "jingle" ? "🎶 Jingle time!" : "🤫 Shhh...", "Press green when done");
+    const quietBlockTitle = block.type === "jingle"
+      ? "🎶 Jingle time!"
+      : block.type === "talk"
+        ? "🎙️ You're on air, DJ!"
+        : "🤫 Shhh...";
+    const quietBlockPrompt = block.type === "talk"
+      ? "Tell us the weather, news & traffic! Press green when you're done."
+      : "Press green when done";
+    updateLiveUI(label, quietBlockTitle, quietBlockPrompt);
     updateProgress(blockDurationSeconds - blockRemainingSeconds, blockDurationSeconds);
     const tick = () => {
       if (isScrubbing) { activePlaybackTimer = setTimeout(tick, 200); return; }
@@ -1405,6 +1441,7 @@ function onTrackEnded() {
     songsPlayedInBlock++;
     if (songsPlayedInBlock >= block.count) {
       isPlaying = false;
+      pauseSpotify();
       currentBlockIndex++;
       runCurrentBlock();
     } else {
