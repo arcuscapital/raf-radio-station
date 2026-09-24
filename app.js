@@ -110,6 +110,10 @@ let trackProgressMsAtPoll = 0;
 let trackProgressPolledAt = 0;
 let endGuardTimer = null;
 let lastHandledTrackUri = null;
+let repeatTrackArmedForUri = null;
+let repeatTrackArmPromise = null;
+let trackPollInFlight = false;
+let trackPollQueued = false;
 let progressTickInterval = null;
 let isScrubbing = false; // true while the child is dragging the progress bar
 
@@ -1044,6 +1048,8 @@ async function restorePlaylistAndAdvance() {
 // currently playing track to detect when it changes.
 async function pollCurrentTrack() {
   if (!isPlaying || !accessToken) return;
+  if (trackPollInFlight) { trackPollQueued = true; return; }
+  trackPollInFlight = true;
   try {
     const res = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {
       headers: { "Authorization": `Bearer ${accessToken}` }
@@ -1069,7 +1075,20 @@ async function pollCurrentTrack() {
         scheduleSongEndGuard();
       }
     }
-  } catch (e) {}
+    const currentBlock = blocks[currentBlockIndex];
+    if (uri && isPlaying && currentBlock?.type === "songs" && songsPlayedInBlock === currentBlock.count - 1 && repeatTrackArmedForUri !== uri) {
+      repeatTrackArmedForUri = uri;
+      repeatTrackArmPromise = setRepeatMode("track");
+      await repeatTrackArmPromise;
+      repeatTrackArmPromise = null;
+    }
+  } catch (e) {} finally {
+    trackPollInFlight = false;
+    if (trackPollQueued) {
+      trackPollQueued = false;
+      if (isPlaying) setTimeout(pollCurrentTrack, 0);
+    }
+  }
 }
 
 // Spotify Connect can carry a playlist across song boundaries before its
@@ -1080,11 +1099,17 @@ function scheduleSongEndGuard() {
   if (!isPlaying || isPaused || !trackDurationMs) return;
   const block = blocks[currentBlockIndex];
   if (!block || block.type !== "songs" || songsPlayedInBlock < block.count - 1) return;
-  const remainingMs = trackDurationMs - trackProgressMsAtPoll;
+  const remainingMs = trackDurationMs - trackProgressMsAtPoll - (Date.now() - trackProgressPolledAt);
   endGuardTimer = setTimeout(async () => {
     endGuardTimer = null;
     if (!isPlaying || isPaused || blocks[currentBlockIndex] !== block) return;
+    if (repeatTrackArmPromise) await repeatTrackArmPromise;
+    if (!isPlaying || isPaused || blocks[currentBlockIndex] !== block) {
+      await setRepeatMode("off");
+      return;
+    }
     await pauseSpotify();
+    await setRepeatMode("off");
     if (!isPlaying || isPaused || blocks[currentBlockIndex] !== block) return;
     isPlaying = false;
     currentBlockIndex++;
@@ -1301,6 +1326,8 @@ async function runCurrentBlock() {
       songsPlayedInBlock = 0;
       lastTrackUri = null;
       lastHandledTrackUri = null;
+      repeatTrackArmedForUri = null;
+      repeatTrackArmPromise = null;
     }
     updateLiveUI("Now Playing", `Song ${songsPlayedInBlock + 1} of ${block.count}`, resuming ? "Resuming..." : "Starting playlist...");
     isPlaying = true;
@@ -1450,11 +1477,10 @@ function onTrackEnded() {
     songsPlayedInBlock++;
     if (songsPlayedInBlock >= block.count) {
       isPlaying = false;
-      pauseSpotify();
       currentBlockIndex++;
       runCurrentBlock();
     } else {
-      updateLiveUI("Now Playing", `Song ${songsPlayedInBlock + 1} of ${block.count}`, "Music from Spotify");
+      updateLiveUI("Now Playing", `Song ${songsPlayedInBlock + 1} of ${block.count}`, statusSub?.textContent || "Music from Spotify");
     }
   }
 }
