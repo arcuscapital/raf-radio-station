@@ -1090,7 +1090,7 @@ function scheduleSongEndGuard() {
     currentBlockIndex++;
     songsPlayedInBlock = 0;
     runCurrentBlock();
-  }, Math.max(0, remainingMs - 700));
+  }, Math.max(0, remainingMs - 80));
 }
 
 // Between polls, estimate the song's live position so the progress bar and
@@ -1407,15 +1407,24 @@ async function runCurrentBlock() {
       blockRemainingSeconds = duration;
       blockDurationSeconds = duration;
     }
-    const quietBlockTitle = block.type === "jingle"
-      ? "🎶 Jingle time!"
-      : block.type === "talk"
-        ? "🎙️ You're on air, DJ!"
-        : "🤫 Shhh...";
-    const quietBlockPrompt = block.type === "talk"
-      ? "Tell us the weather, news & traffic! Press green when you're done."
-      : "Press green when done";
-    updateLiveUI(label, quietBlockTitle, quietBlockPrompt);
+    const quietBlockCopy = {
+      jingle: {
+        title: "🎶 Jingle time!",
+        prompt: "Listen to your jingle! Press green when it finishes."
+      },
+      talk: {
+        title: "🎙️ You're on air, DJ!",
+        prompt: "Tell us the weather, news & traffic! Press green when you're done."
+      },
+      commercial: {
+        title: "📢 Your ad, DJ!",
+        prompt: "Tell everyone about your product! Press green when you're done."
+      }
+    }[block.type] || {
+      title: "🎤 Your turn, DJ!",
+      prompt: "Speak to your listeners! Press green when you're done."
+    };
+    updateLiveUI(label, quietBlockCopy.title, quietBlockCopy.prompt);
     updateProgress(blockDurationSeconds - blockRemainingSeconds, blockDurationSeconds);
     const tick = () => {
       if (isScrubbing) { activePlaybackTimer = setTimeout(tick, 200); return; }
