@@ -886,6 +886,35 @@ if (refreshDeviceBtn) {
   refreshDeviceBtn.addEventListener("click", () => ensureDevice());
 }
 
+// Spotify's Connect endpoints occasionally answer a play/transfer command with a
+// transient 502/503 right after another command was just sent to the same device
+// (it's still catching up) — confirmed live: the "restore the real playlist"
+// call after a background-music handoff failed this way, silently leaving
+// Spotify parked on the background track instead of the show's real playlist,
+// because nothing checked the response or tried again. A couple of quick
+// retries clears this up without the listener ever noticing.
+async function putSpotifyWithRetry(url, body, retries = 2, backoffMs = 500) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: body !== undefined ? JSON.stringify(body) : undefined
+      });
+      if (res.ok || res.status === 204) return true;
+      if (attempt < retries && (res.status === 502 || res.status === 503)) {
+        await new Promise(r => setTimeout(r, backoffMs));
+        continue;
+      }
+      return false;
+    } catch (e) {
+      if (attempt < retries) { await new Promise(r => setTimeout(r, backoffMs)); continue; }
+      return false;
+    }
+  }
+  return false;
+}
+
 function extractPlaylistOrTrackUri(urlOrUri) {
   if (!urlOrUri) return null;
   let match = urlOrUri.match(/playlist[/:]([a-zA-Z0-9]+)/);
@@ -907,12 +936,7 @@ async function playContextUri(contextUri, isTrack, offsetPosition = 0) {
     });
     await new Promise(r => setTimeout(r, 400));
     const body = isTrack ? { uris: [contextUri] } : { context_uri: contextUri, offset: { position: offsetPosition } };
-    await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
-      method: "PUT",
-      headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-    return true;
+    return await putSpotifyWithRetry(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, body);
   } catch (e) {
     console.error("Playback error", e);
     return false;
@@ -1046,11 +1070,18 @@ async function restorePlaylistAndAdvance() {
   const { contextUri, trackUri } = savedPlaylistContext;
   savedPlaylistContext = null;
   try {
-    await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
-      method: "PUT",
-      headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ context_uri: contextUri, offset: { uri: trackUri } })
-    });
+    const restored = await putSpotifyWithRetry(
+      `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
+      { context_uri: contextUri, offset: { uri: trackUri } }
+    );
+    if (!restored) {
+      // Spotify never accepted the restore even after retrying — it's still sitting
+      // on the background track. Skipping/pausing here would only move it further
+      // into the wrong context, so leave it alone; the defensive repeat-mode reset
+      // at the start of the next Songs block is the next chance to recover.
+      console.error("Restore playlist error: Spotify didn't accept the restore command after retries");
+      return;
+    }
     await new Promise(r => setTimeout(r, 300));
     // Move past the track that was interrupted, so the show doesn't replay it.
     await nextTrackSpotify();
