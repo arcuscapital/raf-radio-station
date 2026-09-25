@@ -339,6 +339,13 @@ header h1 {
   margin-top: 8px;
 }
 
+.version-tag {
+  text-align: center;
+  color: #c3cad1;
+  font-size: 0.7rem;
+  margin-top: 24px;
+}
+
 /* Spotify status */
 .spotify-status {
   margin-top: 20px;

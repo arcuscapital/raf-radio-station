@@ -1871,6 +1871,8 @@ bgMusicInput.addEventListener("change", saveShow);
 // ====================== INIT ======================
 async function init() {
   renderBlocks();
+  const versionTag = document.getElementById("app-version-tag");
+  if (versionTag) versionTag.textContent = "v" + APP_VERSION;
 
   await handleRedirect();
   accessToken = localStorage.getItem("spotify_access_token");
