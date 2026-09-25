@@ -6,12 +6,26 @@
   <meta name="theme-color" content="#4A90E2" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
+  <!-- GitHub Pages doesn't let us set real Cache-Control response headers, and
+       confirmed live: the browser can keep serving a cached copy of this exact
+       page (not just app.js) after a redeploy, silently running old code even
+       though the ?v= below was bumped, since it never re-requests the page to
+       see the new query string. This meta tag asks the browser not to do that. -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <title>Krom FM</title>
-  <!-- IMPORTANT: bump the ?v= on this and the app.js <script> tag below on every
-       deploy. Without it, phones (and browsers generally) can keep serving a
-       cached copy of the old script/styles indefinitely after a redeploy — a
-       fix can be live on GitHub Pages and still not actually reach anyone. -->
-  <link rel="stylesheet" href="style.css?v=20260924-2" />
+  <!-- IMPORTANT: on every deploy, bump ALL THREE of: this ?v=, the app.js
+       <script> tag's ?v= below, version.txt's contents, AND APP_VERSION at the
+       top of app.js — all to the same value. Without this, phones (and
+       browsers generally) can keep serving a cached copy of the old page
+       indefinitely after a redeploy, so a fix can be live on GitHub Pages and
+       still never actually reach anyone. app.js checks version.txt itself
+       (bypassing cache) on load and force-reloads if it's running stale code,
+       but that check only works if version.txt and APP_VERSION are kept in
+       sync with each real deploy. -->
+  <!-- versions: style.css / app.js / version.txt / APP_VERSION must all match -->
+  <link rel="stylesheet" href="style.css?v=20260925-1" />
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="icon.png" />
 </head>
@@ -278,6 +292,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=20260924-4"></script>
+  <script src="app.js?v=20260925-1"></script>
 </body>
 </html>

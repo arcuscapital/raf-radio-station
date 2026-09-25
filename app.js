@@ -1,4 +1,7 @@
 // ====================== CONFIG ======================
+// Bump this on every deploy, together with version.txt and the ?v= on the
+// <script>/<link> tags in index.html. See the self-update check below for why.
+const APP_VERSION = "20260925-1";
 const CLIENT_ID = "6ec3c6f59ec14dcca495a904a268a67f";
 // Must exactly match a Redirect URI registered in the Spotify Developer Dashboard.
 const REDIRECT_URI = window.location.origin + window.location.pathname;
@@ -1924,5 +1927,32 @@ function runSplashScreen() {
   splashScreen.addEventListener("click", finishSplash, { once: true });
 }
 
+// ====================== SELF-UPDATE CHECK ======================
+// The ?v= query strings on index.html's <script>/<link> tags are only a hint —
+// confirmed directly: a browser can keep serving a cached copy of this entire
+// page (not just app.js) after a redeploy and never notice the query string
+// changed, silently running old code indefinitely (this is very likely why a
+// fix could look "still broken" even after it was deployed). Meta cache-control
+// tags are a hint too and unreliable, especially on mobile/PWA. This is the one
+// check that actually works regardless of caching: explicitly bypass the cache
+// (fetch's own no-store option, not just a different URL) to read the real
+// deployed version, and if it doesn't match what's actually running right now,
+// force a real reload with a brand-new, never-cached URL.
+async function checkForUpdateAndReload() {
+  if (new URLSearchParams(window.location.search).has("code")) return; // mid Spotify login, don't interrupt it
+  try {
+    const res = await fetch("version.txt", { cache: "no-store" });
+    if (!res.ok) return;
+    const latest = (await res.text()).trim();
+    if (latest && latest !== APP_VERSION) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("v", latest);
+      url.searchParams.set("t", Date.now().toString());
+      window.location.replace(url.toString());
+    }
+  } catch (e) { /* offline or blocked — just carry on with whatever is running */ }
+}
+
+checkForUpdateAndReload();
 runSplashScreen();
 init();
